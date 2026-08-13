@@ -102,18 +102,33 @@ export class UsersService {
     await this.usersRepo.increment({ id }, 'telemedAttempts', 1);
   }
 
-  /** Contadores de assinaturas (titulares) para o painel: hoje, pendentes, canceladas, ativas. */
-  async subscriptionStats(): Promise<{ today: number; pending: number; canceled: number; active: number }> {
+  /**
+   * Contadores de assinaturas (titulares) para o painel.
+   * Totais (active/pending/canceled) + o recorte do DIA (today*).
+   */
+  async subscriptionStats(): Promise<{
+    active: number;
+    pending: number;
+    canceled: number;
+    today: number;
+    todayActive: number;
+    todayPending: number;
+    todayCanceled: number;
+  }> {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const base = { holderId: IsNull() }; // só titulares (dependentes não são assinaturas)
-    const [active, pending, canceled, today] = await Promise.all([
+    const todayBase = { ...base, createdAt: MoreThanOrEqual(startOfDay) };
+    const [active, pending, canceled, today, todayActive, todayPending, todayCanceled] = await Promise.all([
       this.usersRepo.count({ where: { ...base, status: 'ativo' } }),
       this.usersRepo.count({ where: { ...base, status: 'pendente' } }),
       this.usersRepo.count({ where: { ...base, status: 'inativo' } }),
-      this.usersRepo.count({ where: { ...base, createdAt: MoreThanOrEqual(startOfDay) } }),
+      this.usersRepo.count({ where: todayBase }),
+      this.usersRepo.count({ where: { ...todayBase, status: 'ativo' } }),
+      this.usersRepo.count({ where: { ...todayBase, status: 'pendente' } }),
+      this.usersRepo.count({ where: { ...todayBase, status: 'inativo' } }),
     ]);
-    return { today, pending, canceled, active };
+    return { active, pending, canceled, today, todayActive, todayPending, todayCanceled };
   }
 
   /** Define a senha diretamente (uso administrativo — sem checar senha atual). */
