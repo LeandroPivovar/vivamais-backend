@@ -1,6 +1,6 @@
 import { NotFoundException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { AppConfig } from './entities/config.entity';
 import { Transaction } from '../billing/entities/transaction.entity';
 import { UpdateConfigDto } from './dto/update-config.dto';
@@ -168,6 +168,7 @@ export class AdminService {
 
   async listBillingHistory() {
     const transactions = await this.txRepo.find({
+      where: { status: Not('duplicado') },
       relations: ['user'],
       order: { createdAt: 'DESC' },
     });
@@ -178,6 +179,9 @@ export class AdminService {
       value: Number(tx.value),
       status: tx.status,
       date: formatDate(tx.createdAt),
+      dateIso: tx.createdAt.toISOString(),
+      paymentMethod: tx.paymentMethod,
+      gatewayProvider: tx.gatewayProvider,
       commissionMmn: Number(tx.commissionMmn),
     }));
   }

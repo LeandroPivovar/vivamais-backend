@@ -15,6 +15,7 @@ import { PaymentModule } from './payment/payment.module';
 import { MailModule } from './mail/mail.module';
 import { ClubeCertoModule } from './clube-certo/clube-certo.module';
 import { DependentsModule } from './dependents/dependents.module';
+import { TelegramModule } from './telegram/telegram.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { ChatModule } from './chat/chat.module';
 import { UploadsModule } from './uploads/uploads.module';
@@ -56,6 +57,7 @@ import { ChatMessage } from './chat/entities/chat-message.entity';
     MailModule,
     ClubeCertoModule,
     DependentsModule,
+    TelegramModule,
     TicketsModule,
     ChatModule,
     UploadsModule,

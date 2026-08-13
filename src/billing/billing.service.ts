@@ -14,6 +14,7 @@ import { WooviService } from '../payment/woovi.service';
 import { PagarmeService } from '../payment/pagarme.service';
 import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { MailService } from '../mail/mail.service';
+import { TelegramService } from '../telegram/telegram.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
 import { PayDto } from './dto/pay.dto';
@@ -66,6 +67,7 @@ export class BillingService {
     private pagarmeService: PagarmeService,
     private clubeCertoService: ClubeCertoService,
     private mailService: MailService,
+    private telegramService: TelegramService,
   ) {}
 
   /**
@@ -80,7 +82,7 @@ export class BillingService {
     const config = await this.configRepo.findOne({ where: {} });
     const price = config ? basePriceForPlan(user.plan, config) : 0;
 
-    const txs = await this.txRepo.find({ where: { userId }, order: { createdAt: 'ASC' } });
+    const txs = await this.txRepo.find({ where: { userId, status: Not('duplicado') }, order: { createdAt: 'ASC' } });
     const isPaid = (s: string) => s === 'pago' || s === 'Renovado (Pago)';
     const paidCount = txs.filter((t) => isPaid(t.status)).length;
     const method =
@@ -115,7 +117,7 @@ export class BillingService {
     if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
 
     const price = basePriceForPlan(user.plan, config); // cobra o valor da tabela do plano (79,90 / 129,90)
-    const lastTx = await this.txRepo.findOne({ where: { userId }, order: { createdAt: 'DESC' } });
+    const lastTx = await this.txRepo.findOne({ where: { userId, status: Not('duplicado') }, order: { createdAt: 'DESC' } });
     const nextBilling = lastTx ? new Date(lastTx.createdAt) : new Date();
     nextBilling.setMonth(nextBilling.getMonth() + 1);
 
@@ -221,6 +223,12 @@ export class BillingService {
       if (!result.ok || !result.subscriptionId) {
         await this.txRepo.remove(transaction);
         await this.usersRepo.remove(savedUser);
+        await this.telegramService.notifyError({
+          context: 'Checkout — assinatura no cartão (Pagar.me)',
+          detail: result.error || 'Não foi possível processar o cartão.',
+          client: dto.name,
+          value: price,
+        });
         throw new BadRequestException(result.error || 'Não foi possível processar o cartão.');
       }
       transaction.gatewaySubscriptionId = result.subscriptionId;
@@ -279,6 +287,12 @@ export class BillingService {
       if (!result.ok || !result.emv) {
         await this.txRepo.remove(transaction);
         await this.usersRepo.remove(savedUser);
+        await this.telegramService.notifyError({
+          context: 'Checkout — Pix Automático (Woovi)',
+          detail: result.error || 'Não foi possível gerar o Pix Automático.',
+          client: dto.name,
+          value: price,
+        });
         throw new BadRequestException(result.error || 'Não foi possível gerar o Pix Automático.');
       }
 
@@ -700,6 +714,23 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(transaction.value)),
     );
+    // Notifica a venda confirmada no Telegram (no-op se não configurado).
+    await this.telegramService.notifySale({
+      client: user.name,
+      plan: transaction.plan,
+      value: Number(transaction.value),
+      method: transaction.paymentMethod,
+      gateway: transaction.gatewayProvider ?? undefined,
+    });
+    // Telemedicina falhou no cadastro? Avisa o grupo de erros (venda ok, mas benefício pendente).
+    if (!venccaOk) {
+      await this.telegramService.notifyError({
+        context: 'Cadastro na telemedicina (Vencca) após pagamento',
+        detail: 'Associado não registrado na telemedicina — o cron vai re-tentar. Verifique dados (ex.: CPF).',
+        client: user.name,
+        value: Number(transaction.value),
+      });
+    }
   }
 
   /**
@@ -824,6 +855,11 @@ export class BillingService {
       if (chargeId) {
         const dup = await this.txRepo.findOne({ where: { gatewayTransactionId: String(chargeId) } });
         if (dup) return;
+      } else if (origin.status !== 'pendente') {
+        this.logger.warn(
+          `Woovi: webhook ${event} sem id de cobranÃ§a ignorado para assinatura jÃ¡ processada (user ${origin.userId}).`,
+        );
+        return;
       }
 
       if (origin.status === 'pendente') {
