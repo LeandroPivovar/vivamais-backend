@@ -118,7 +118,7 @@ export class VenccaService {
       Matricula: matricula,
       Nome: this.sanitizeText(user.name),
       DataNascimento: user.birthDate ?? '',
-      CPF: user.cpf,
+      CPF: this.onlyDigits(user.cpf),
       Celular: this.onlyDigits(user.phone),
       Email: user.email,
       DataVencimento: this.formatDate(dueDate),

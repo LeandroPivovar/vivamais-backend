@@ -1,5 +1,5 @@
-import { Type } from 'class-transformer';
-import { IsEmail, IsIn, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type, Transform } from 'class-transformer';
+import { IsEmail, IsIn, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
 import { AccessDto } from './access.dto';
 
 export class CreateUserDto {
@@ -9,7 +9,9 @@ export class CreateUserDto {
   @IsEmail()
   email: string;
 
-  @IsString()
+  // Normaliza para 11 dígitos e valida (evita CPF formatado/inválido no banco).
+  @Transform(({ value }) => (typeof value === 'string' ? value.replace(/\D/g, '') : value))
+  @Matches(/^\d{11}$/, { message: 'CPF inválido: informe os 11 dígitos.' })
   cpf: string;
 
   @IsOptional()

@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class CheckoutDto {
   @IsString()
@@ -13,7 +14,10 @@ export class CheckoutDto {
   @IsEmail()
   email: string;
 
-  @IsString()
+  // Normaliza para 11 dígitos (tira pontos/traço/espaços) e valida — evita CPF
+  // formatado/inválido chegar no banco e nas integrações (Woovi/Vencca).
+  @Transform(({ value }) => (typeof value === 'string' ? value.replace(/\D/g, '') : value))
+  @Matches(/^\d{11}$/, { message: 'CPF inválido: informe os 11 dígitos.' })
   cpf: string;
 
   @IsString()
