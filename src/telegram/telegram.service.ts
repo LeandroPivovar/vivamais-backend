@@ -53,6 +53,12 @@ export class TelegramService {
     }
   }
 
+  /** Envia para todos os chats configurados (DM + grupo), sem duplicar. */
+  private async broadcast(text: string): Promise<void> {
+    const targets = [...new Set([this.chatId, this.errorChatId].filter(Boolean))];
+    for (const chat of targets) await this.send(chat, text);
+  }
+
   /** Venda confirmada. */
   async notifySale(d: {
     client: string;
@@ -71,7 +77,7 @@ export class TelegramService {
       `💰 Valor: ${value}\n` +
       (d.method ? `💳 Pagamento: ${this.escape(d.method)}${d.gateway ? ` (${this.escape(d.gateway)})` : ''}\n` : '') +
       `🕒 ${this.nowBr()}`;
-    await this.send(this.chatId, text);
+    await this.broadcast(text);
   }
 
   /** Erro — vai pro chat principal E pro grupo de erros. */
@@ -90,9 +96,6 @@ export class TelegramService {
       (d.value != null ? `💰 Valor: R$ ${Number(d.value).toFixed(2).replace('.', ',')}\n` : '') +
       `❌ ${this.escape(d.detail)}\n` +
       `🕒 ${this.nowBr()}`;
-    await this.send(this.chatId, text);
-    if (this.errorChatId && this.errorChatId !== this.chatId) {
-      await this.send(this.errorChatId, text);
-    }
+    await this.broadcast(text);
   }
 }
