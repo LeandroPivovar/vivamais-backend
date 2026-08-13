@@ -60,6 +60,12 @@ export class AdminController {
     return this.adminService.listBillingHistory();
   }
 
+  /** Contadores de assinaturas para o painel: hoje, pendentes, canceladas, ativas. */
+  @Get('subscription-stats')
+  subscriptionStats() {
+    return this.usersService.subscriptionStats();
+  }
+
   /** Testa a conexão com o Clube Certo (login + lista de produtos da empresa). */
   @Get('clube-certo/test')
   testClubeCerto() {

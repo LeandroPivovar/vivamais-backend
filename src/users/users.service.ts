@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { AppConfig, ModuleConfig } from '../admin/entities/config.entity';
@@ -100,6 +100,20 @@ export class UsersService {
   /** Incrementa o contador de tentativas de cadastro na telemedicina. */
   async incrementTelemedAttempts(id: number): Promise<void> {
     await this.usersRepo.increment({ id }, 'telemedAttempts', 1);
+  }
+
+  /** Contadores de assinaturas (titulares) para o painel: hoje, pendentes, canceladas, ativas. */
+  async subscriptionStats(): Promise<{ today: number; pending: number; canceled: number; active: number }> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const base = { holderId: IsNull() }; // só titulares (dependentes não são assinaturas)
+    const [active, pending, canceled, today] = await Promise.all([
+      this.usersRepo.count({ where: { ...base, status: 'ativo' } }),
+      this.usersRepo.count({ where: { ...base, status: 'pendente' } }),
+      this.usersRepo.count({ where: { ...base, status: 'inativo' } }),
+      this.usersRepo.count({ where: { ...base, createdAt: MoreThanOrEqual(startOfDay) } }),
+    ]);
+    return { today, pending, canceled, active };
   }
 
   /** Define a senha diretamente (uso administrativo — sem checar senha atual). */
