@@ -48,7 +48,14 @@ export class ChatService {
   }
 
   async listConversations() {
-    const convs = await this.convRepo.find({ relations: ['user'], order: { lastMessageAt: 'DESC' } });
+    const convs = await this.convRepo
+      .createQueryBuilder('conv')
+      .leftJoinAndSelect('conv.user', 'user')
+      .innerJoin('conv.messages', 'message', 'message.senderRole = :senderRole', { senderRole: 'user' })
+      .where('conv.status = :status', { status: 'aberto' })
+      .orderBy('conv.lastMessageAt', 'DESC')
+      .distinct(true)
+      .getMany();
     return Promise.all(convs.map((c) => this.summary(c)));
   }
 

@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import { Between, IsNull, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { AppConfig, ModuleConfig } from '../admin/entities/config.entity';
@@ -15,6 +15,27 @@ const LEVEL_LABELS = ['1º Nível', '2º Nível', '3º Nível', '4º Nível', '5
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('pt-BR');
+}
+
+function saoPauloTodayWindow(date = new Date()): { start: Date; endInclusive: Date } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+
+  const getPart = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+
+  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0));
+  const endInclusive = new Date(start);
+  endInclusive.setUTCDate(endInclusive.getUTCDate() + 1);
+  endInclusive.setUTCMilliseconds(endInclusive.getUTCMilliseconds() - 1);
+
+  return { start, endInclusive };
 }
 
 @Injectable()
@@ -115,10 +136,9 @@ export class UsersService {
     todayPending: number;
     todayCanceled: number;
   }> {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const { start, endInclusive } = saoPauloTodayWindow();
     const base = { holderId: IsNull() }; // só titulares (dependentes não são assinaturas)
-    const todayBase = { ...base, createdAt: MoreThanOrEqual(startOfDay) };
+    const todayBase = { ...base, createdAt: Between(start, endInclusive) };
     const [active, pending, canceled, today, todayActive, todayPending, todayCanceled] = await Promise.all([
       this.usersRepo.count({ where: { ...base, status: 'ativo' } }),
       this.usersRepo.count({ where: { ...base, status: 'pendente' } }),
