@@ -19,6 +19,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { ChatModule } from './chat/chat.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { User } from './users/entities/user.entity';
 import { ReferralLink } from './referrals/entities/referral-link.entity';
 import { Transaction } from './billing/entities/transaction.entity';
@@ -61,6 +62,7 @@ import { ChatMessage } from './chat/entities/chat-message.entity';
     TicketsModule,
     ChatModule,
     UploadsModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}

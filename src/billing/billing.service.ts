@@ -15,6 +15,7 @@ import { PagarmeService } from '../payment/pagarme.service';
 import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { MailService } from '../mail/mail.service';
 import { TelegramService } from '../telegram/telegram.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
 import { PayDto } from './dto/pay.dto';
@@ -68,6 +69,7 @@ export class BillingService {
     private clubeCertoService: ClubeCertoService,
     private mailService: MailService,
     private telegramService: TelegramService,
+    private notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -223,12 +225,15 @@ export class BillingService {
       if (!result.ok || !result.subscriptionId) {
         await this.txRepo.remove(transaction);
         await this.usersRepo.remove(savedUser);
-        await this.telegramService.notifyError({
-          context: 'Checkout — assinatura no cartão (Pagar.me)',
-          detail: result.error || 'Não foi possível processar o cartão.',
-          client: dto.name,
-          value: price,
-        });
+        {
+          const errInfo = {
+            context: 'Checkout — assinatura no cartão (Pagar.me)',
+            detail: result.error || 'Não foi possível processar o cartão.',
+            client: dto.name,
+            value: price,
+          };
+          await this.telegramService.notifyError(errInfo);
+        }
         throw new BadRequestException(result.error || 'Não foi possível processar o cartão.');
       }
       transaction.gatewaySubscriptionId = result.subscriptionId;
@@ -287,12 +292,15 @@ export class BillingService {
       if (!result.ok || !result.emv) {
         await this.txRepo.remove(transaction);
         await this.usersRepo.remove(savedUser);
-        await this.telegramService.notifyError({
-          context: 'Checkout — Pix Automático (Woovi)',
-          detail: result.error || 'Não foi possível gerar o Pix Automático.',
-          client: dto.name,
-          value: price,
-        });
+        {
+          const errInfo = {
+            context: 'Checkout — Pix Automático (Woovi)',
+            detail: result.error || 'Não foi possível gerar o Pix Automático.',
+            client: dto.name,
+            value: price,
+          };
+          await this.telegramService.notifyError(errInfo);
+        }
         throw new BadRequestException(result.error || 'Não foi possível gerar o Pix Automático.');
       }
 
@@ -714,8 +722,17 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(transaction.value)),
     );
-    // Notifica a venda confirmada no Telegram (no-op se não configurado).
-    await this.telegramService.notifySale({
+    // Notifica a venda confirmada (Telegram + WhatsApp/Z-API; no-op se não configurados).
+    const saleInfo = {
+      client: user.name,
+      plan: transaction.plan,
+      value: Number(transaction.value),
+      method: transaction.paymentMethod,
+      gateway: transaction.gatewayProvider ?? undefined,
+    };
+    await this.telegramService.notifySale(saleInfo);
+    await this.notificationsService.notifySale({
+      transactionId: transaction.id,
       client: user.name,
       plan: transaction.plan,
       value: Number(transaction.value),
@@ -724,12 +741,15 @@ export class BillingService {
     });
     // Telemedicina falhou no cadastro? Avisa o grupo de erros (venda ok, mas benefício pendente).
     if (!venccaOk) {
-      await this.telegramService.notifyError({
-        context: 'Cadastro na telemedicina (Vencca) após pagamento',
-        detail: 'Associado não registrado na telemedicina — o cron vai re-tentar. Verifique dados (ex.: CPF).',
-        client: user.name,
-        value: Number(transaction.value),
-      });
+      {
+        const errInfo = {
+          context: 'Cadastro na telemedicina (Vencca) após pagamento',
+          detail: 'Associado não registrado na telemedicina — o cron vai re-tentar. Verifique dados (ex.: CPF).',
+          client: user.name,
+          value: Number(transaction.value),
+        };
+        await this.telegramService.notifyError(errInfo);
+      }
     }
   }
 
@@ -811,6 +831,14 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(renewal.value)),
     );
+    await this.notificationsService.notifySale({
+      transactionId: renewal.id,
+      client: user.name,
+      plan: renewal.plan,
+      value: Number(renewal.value),
+      method: renewal.paymentMethod,
+      gateway: renewal.gatewayProvider ?? undefined,
+    });
     this.logger.log(
       `Renovação recorrente registrada: assinatura ${confirmed.subscriptionId}, user ${origin.userId}, tx ${confirmed.id}.`,
     );
@@ -870,6 +898,14 @@ export class BillingService {
         const user = await this.usersService.findById(origin.userId);
         if (isRenewalSub) {
           await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(origin.value)));
+          await this.notificationsService.notifySale({
+            transactionId: origin.id,
+            client: user.name,
+            plan: origin.plan,
+            value: Number(origin.value),
+            method: origin.paymentMethod,
+            gateway: origin.gatewayProvider ?? undefined,
+          });
         } else {
           const link = user.referredById
             ? await this.referralsService.findLinkByOwnerAndPlan(user.referredById, user.plan)
@@ -895,12 +931,30 @@ export class BillingService {
         );
         const user = await this.usersService.findById(origin.userId);
         await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
+        await this.notificationsService.notifySale({
+          transactionId: renewal.id,
+          client: user.name,
+          plan: renewal.plan,
+          value: Number(renewal.value),
+          method: renewal.paymentMethod,
+          gateway: renewal.gatewayProvider ?? undefined,
+        });
         this.logger.log(`Woovi: renovação recorrente paga (user ${origin.userId}, cobr ${chargeId}).`);
       }
     } else if (['PIX_AUTOMATIC_REJECTED', 'PIX_AUTOMATIC_COBR_REJECTED'].includes(event)) {
       if (origin.status === 'pendente') {
         origin.status = 'cancelado';
         await this.txRepo.save(origin);
+        const user = await this.usersService.findById(origin.userId);
+        await this.notificationsService.notifyRefundOrCancel({
+          transactionId: origin.id,
+          client: user.name,
+          plan: origin.plan,
+          value: Number(origin.value),
+          method: origin.paymentMethod,
+          gateway: origin.gatewayProvider ?? undefined,
+          reason: event,
+        });
         this.logger.warn(`Woovi: autorização/cobrança rejeitada (user ${origin.userId}, event ${event}).`);
       }
     }
@@ -924,10 +978,39 @@ export class BillingService {
         await this.confirmPaid(tx, link, user);
       } else {
         await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(tx.value)));
+        await this.notificationsService.notifySale({
+          transactionId: tx.id,
+          client: user.name,
+          plan: tx.plan,
+          value: Number(tx.value),
+          method: tx.paymentMethod,
+          gateway: tx.gatewayProvider ?? undefined,
+        });
       }
     } else if (status === 'failed' && tx.status !== 'pago' && tx.status !== 'cancelado') {
       tx.status = 'cancelado';
       await this.txRepo.save(tx);
+      const user = await this.usersService.findById(tx.userId);
+      await this.notificationsService.notifyRefundOrCancel({
+        transactionId: tx.id,
+        client: user.name,
+        plan: tx.plan,
+        value: Number(tx.value),
+        method: tx.paymentMethod,
+        gateway: tx.gatewayProvider ?? undefined,
+        reason: status,
+      });
+    } else if (status === 'failed' && tx.status === 'pago') {
+      const user = await this.usersService.findById(tx.userId);
+      await this.notificationsService.notifyRefundOrCancel({
+        transactionId: tx.id,
+        client: user.name,
+        plan: tx.plan,
+        value: Number(tx.value),
+        method: tx.paymentMethod,
+        gateway: tx.gatewayProvider ?? undefined,
+        reason: status,
+      });
     }
   }
 
@@ -969,6 +1052,14 @@ export class BillingService {
       );
       const user = await this.usersService.findById(origin.userId);
       await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
+      await this.notificationsService.notifySale({
+        transactionId: renewal.id,
+        client: user.name,
+        plan: renewal.plan,
+        value: Number(renewal.value),
+        method: renewal.paymentMethod,
+        gateway: renewal.gatewayProvider ?? undefined,
+      });
       this.logger.log(`Pagar.me: renovação recorrente paga (user ${origin.userId}, charge ${chargeId}).`);
       return;
     }

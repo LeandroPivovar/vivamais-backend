@@ -5,6 +5,7 @@ import { Ticket } from './entities/ticket.entity';
 import { TicketMessage } from './entities/ticket-message.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { AddMessageDto } from './dto/add-message.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const STATUS_LABELS: Record<string, string> = {
   enviado: 'Enviado',
@@ -17,6 +18,7 @@ export class TicketsService {
   constructor(
     @InjectRepository(Ticket) private ticketsRepo: Repository<Ticket>,
     @InjectRepository(TicketMessage) private messagesRepo: Repository<TicketMessage>,
+    private notifications: NotificationsService,
   ) {}
 
   private summary(t: Ticket, extra?: { userName?: string; lastMessageAt?: Date }) {
@@ -55,6 +57,13 @@ export class TicketsService {
         image: dto.image ?? null,
       }),
     );
+    const withUser = await this.ticketsRepo.findOne({ where: { id: ticket.id }, relations: ['user'] });
+    void this.notifications.notifyTicketOpened({
+      id: ticket.id,
+      title: ticket.title,
+      user: withUser?.user?.name ?? null,
+      status: ticket.status,
+    });
     return this.summary(ticket);
   }
 
@@ -71,11 +80,19 @@ export class TicketsService {
   }
 
   async addUserMessage(userId: number, id: number, dto: AddMessageDto) {
-    const ticket = await this.ticketsRepo.findOne({ where: { id } });
+    const ticket = await this.ticketsRepo.findOne({ where: { id }, relations: ['user'] });
     if (!ticket) throw new NotFoundException('Ticket não encontrado.');
     if (ticket.userId !== userId) throw new ForbiddenException('Esse ticket não é seu.');
     if (ticket.status === 'fechado') throw new ForbiddenException('Ticket fechado. Abra um novo para continuar.');
-    return this.addMessage(ticket, 'user', dto, 'enviado');
+    const res = await this.addMessage(ticket, 'user', dto, 'enviado');
+    void this.notifications.notifyTicketUpdated({
+      id: ticket.id,
+      title: ticket.title,
+      user: ticket.user?.name ?? null,
+      status: 'enviado',
+      action: 'Nova mensagem do cliente',
+    });
+    return res;
   }
 
   // ---- Admin ----
@@ -102,6 +119,13 @@ export class TicketsService {
     if (!ticket) throw new NotFoundException('Ticket não encontrado.');
     ticket.status = status;
     await this.ticketsRepo.save(ticket);
+    void this.notifications.notifyTicketUpdated({
+      id: ticket.id,
+      title: ticket.title,
+      user: ticket.user?.name ?? null,
+      status,
+      action: `Status alterado para ${STATUS_LABELS[status] ?? status}`,
+    });
     return this.detail(ticket);
   }
 
