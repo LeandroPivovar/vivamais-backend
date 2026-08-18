@@ -6,6 +6,7 @@ export interface JwtPayload {
   sub: number;
   email: string;
   role: 'user' | 'admin';
+  scope?: 'full' | 'kids-teen';
 }
 
 @Injectable()
@@ -19,6 +20,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
-    return { id: payload.sub, email: payload.email, role: payload.role };
+    return { id: payload.sub, email: payload.email, role: payload.role, scope: payload.scope ?? 'full' };
   }
 }

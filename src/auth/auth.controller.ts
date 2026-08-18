@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { CpfLoginDto } from './dto/cpf-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -13,6 +14,13 @@ export class AuthController {
   @HttpCode(200)
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  /** Login exclusivo do Kids/Teen — apenas CPF, sem senha (token de escopo restrito). */
+  @Post('login-kids')
+  @HttpCode(200)
+  loginKids(@Body() dto: CpfLoginDto) {
+    return this.authService.loginKidsTeen(dto);
   }
 
   @Post('forgot-password')

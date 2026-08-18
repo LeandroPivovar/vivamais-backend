@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../users/entities/user.entity';
 import { LoginDto } from './dto/login.dto';
+import { CpfLoginDto } from './dto/cpf-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { MailService } from '../mail/mail.service';
@@ -42,6 +43,37 @@ export class AuthService {
         plan: user.plan,
         active: user.status === 'ativo',
         role: user.role,
+        isDependent: user.holderId != null,
+      },
+    };
+  }
+
+  /**
+   * Login exclusivo do Kids/Teen: apenas CPF, sem senha. Emite um token de escopo
+   * restrito (scope 'kids-teen') que só abre rotas marcadas com @AllowKidsTeen() —
+   * não dá acesso a financeiro, dependentes, admin ou qualquer outra área da conta.
+   */
+  async loginKidsTeen(dto: CpfLoginDto) {
+    const user = await this.usersRepo.findOne({ where: { cpf: dto.cpf }, relations: ['holder'] });
+    if (!user) throw new UnauthorizedException('CPF não encontrado.');
+
+    const activeStatus = user.holderId != null ? user.holder?.status : user.status;
+    if (activeStatus !== 'ativo') {
+      throw new UnauthorizedException('Assinatura inativa. Fale com o titular da conta.');
+    }
+
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      scope: 'kids-teen',
+    });
+
+    return {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
         isDependent: user.holderId != null,
       },
     };
