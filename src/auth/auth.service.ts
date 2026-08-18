@@ -9,6 +9,7 @@ import { CpfLoginDto } from './dto/cpf-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { MailService } from '../mail/mail.service';
+import { ageGroup } from '../common/age';
 
 const RESET_CODE_TTL_MIN = 15;
 
@@ -57,9 +58,20 @@ export class AuthService {
     const user = await this.usersRepo.findOne({ where: { cpf: dto.cpf }, relations: ['holder'] });
     if (!user) throw new UnauthorizedException('CPF não encontrado.');
 
-    const activeStatus = user.holderId != null ? user.holder?.status : user.status;
+    // Só dependente entra no Kids/Teen -- titular não usa o próprio CPF aqui.
+    if (user.holderId == null) {
+      throw new UnauthorizedException('Esse CPF é de titular. O login do Kids/Teen é só para dependentes.');
+    }
+
+    const activeStatus = user.holder?.status;
     if (activeStatus !== 'ativo') {
       throw new UnauthorizedException('Assinatura inativa. Fale com o titular da conta.');
+    }
+
+    // Idade do dependente precisa bater com a área (kids até 10, teen 11-17).
+    const group = ageGroup(user.birthDate);
+    if (group !== dto.module) {
+      throw new UnauthorizedException('Idade do dependente não é compatível com esta área.');
     }
 
     const token = this.jwtService.sign({

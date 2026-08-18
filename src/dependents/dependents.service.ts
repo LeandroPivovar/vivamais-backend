@@ -5,7 +5,9 @@ import * as bcrypt from 'bcrypt';
 import { User } from '../users/entities/user.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { MailService } from '../mail/mail.service';
+import { VenccaService } from '../vencca/vencca.service';
 import { CreateDependentDto } from './dto/create-dependent.dto';
+import { ageGroup } from '../common/age';
 
 /** Plano do titular -> coluna de limite no app_config. */
 const DEPENDENT_LIMIT_FIELD: Record<string, keyof AppConfig> = {
@@ -33,6 +35,7 @@ export class DependentsService {
     @InjectRepository(User) private usersRepo: Repository<User>,
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
     private mailService: MailService,
+    private venccaService: VenccaService,
   ) {}
 
   /** Limite de dependentes do plano do titular. */
@@ -50,6 +53,9 @@ export class DependentsService {
       email: dep.email,
       cpf: dep.cpf,
       phone: dep.phone,
+      birthDate: dep.birthDate,
+      /** 'kids' (até 10 anos), 'teen' (11-17) ou 'adult' (18+) — null se sem data de nascimento. */
+      ageGroup: ageGroup(dep.birthDate),
       createdAt: dep.createdAt,
     };
   }
@@ -116,6 +122,27 @@ export class DependentsService {
       await this.mailService.sendWelcomePassword(saved.email, saved.name, password);
     } catch {
       // cadastro segue mesmo se o e-mail falhar; a senha pode ser reenviada depois
+    }
+
+    // Cadastro do dependente na telemedicina (Vencca) -- herda o endereço do titular
+    // (mesmo domicílio). Best-effort: dependente segue criado mesmo se a Vencca falhar
+    // (o admin pode reprocessar depois, igual ao fluxo do titular).
+    if (this.venccaService.isEnabled()) {
+      const cliente = this.venccaService.mapUserToCliente({
+        ...saved,
+        address: holder.address,
+        neighborhood: holder.neighborhood,
+        complement: holder.complement,
+        city: holder.city,
+        state: holder.state,
+        zipCode: holder.zipCode,
+        gender: saved.gender ?? holder.gender,
+      } as User);
+      const ok = await this.venccaService.registerAssociates([cliente]);
+      if (ok) {
+        saved.telemedRegistered = true;
+        await this.usersRepo.save(saved);
+      }
     }
 
     return this.toResponse(saved);
