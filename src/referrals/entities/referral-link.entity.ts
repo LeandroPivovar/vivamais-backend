@@ -48,6 +48,10 @@ export class ReferralLink {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: DecimalTransformer })
   comissao: number;
 
+  /** Bônus de R$30 do primeiro mês de indicações novas (a partir da introdução da regra). */
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: DecimalTransformer })
+  bonusTotal: number;
+
   @Column({ type: 'varchar', length: 10, default: 'Ativo' })
   status: string;
 

@@ -705,7 +705,15 @@ export class BillingService {
       await this.usersRepo.save(user);
     }
     if (link) {
-      await this.referralsService.registerConversion(link.id, Number(transaction.value));
+      const { bonus } = await this.referralsService.registerConversion(link.id, Number(transaction.value));
+      if (bonus > 0) {
+        transaction.referralBonus = bonus;
+        await this.txRepo.save(transaction);
+        // Marca no indicado (não no indicador) que essa indicação rendeu o bônus --
+        // é o que aparece como selo "indicação nova" no relatório do indicador.
+        user.referralBonusPaid = true;
+        await this.usersRepo.save(user);
+      }
     }
     // Telemedicina (Vencca) — cadastro antigo, mantido. Marca sucesso pra não re-tentar no cron.
     const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);

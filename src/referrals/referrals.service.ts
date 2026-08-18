@@ -40,6 +40,8 @@ export class ReferralsService {
       cliques: link.cliques,
       conversoes: link.conversoes,
       comissao: `R$ ${Number(link.comissao).toFixed(2).replace('.', ',')}`,
+      /** Bônus de R$30/indicação nova (primeiro mês), acumulado no link. */
+      bonus: `R$ ${Number(link.bonusTotal).toFixed(2).replace('.', ',')}`,
       status: link.status,
     };
   }
@@ -175,11 +177,21 @@ export class ReferralsService {
     await this.linksRepo.increment({ id: link.id }, 'cliques', 1);
   }
 
-  async registerConversion(linkId: number, amount: number): Promise<void> {
+  /** Bônus do primeiro mês de uma indicação nova, além da comissão de 10% de sempre. */
+  static readonly NEW_REFERRAL_BONUS = 30;
+
+  /**
+   * Roda só na 1ª cobrança paga de uma assinatura vinda de indicação (nunca em
+   * renovação — ver confirmPaid/recordRecurringCharge no billing). Por isso o bônus
+   * de R$30 aqui é sempre "indicação nova", nunca retroativo a conversões antigas.
+   */
+  async registerConversion(linkId: number, amount: number): Promise<{ bonus: number }> {
     const link = await this.linksRepo.findOne({ where: { id: linkId } });
-    if (!link) return;
+    if (!link) return { bonus: 0 };
     link.conversoes += 1;
     link.comissao = Number(link.comissao) + amount * 0.1;
+    link.bonusTotal = Number(link.bonusTotal) + ReferralsService.NEW_REFERRAL_BONUS;
     await this.linksRepo.save(link);
+    return { bonus: ReferralsService.NEW_REFERRAL_BONUS };
   }
 }

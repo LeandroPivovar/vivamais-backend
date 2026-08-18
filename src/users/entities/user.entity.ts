@@ -127,6 +127,10 @@ export class User {
   @Column({ type: 'int', default: 0 })
   telemedAttempts: number;
 
+  /** Sua indicação rendeu o bônus de R$30 (1º mês) pra quem indicou? Marcado só na ativação. */
+  @Column({ type: 'boolean', default: false })
+  referralBonusPaid: boolean;
+
   @OneToMany(() => ReferralLink, (link) => link.user)
   links: ReferralLink[];
 

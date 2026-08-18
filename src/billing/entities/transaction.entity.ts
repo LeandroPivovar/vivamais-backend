@@ -36,6 +36,10 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: DecimalTransformer })
   commissionMmn: number;
 
+  /** Bônus de R$30 do primeiro mês de indicação nova (0 se não veio de indicação ou é renovação). */
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: DecimalTransformer })
+  referralBonus: number;
+
   // --- Rastreio no gateway ---
   // Qual gateway processou este lançamento: 'veenca' | 'woovi'.
   @Column({ type: 'varchar', length: 20, default: 'veenca' })

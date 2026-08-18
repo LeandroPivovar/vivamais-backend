@@ -288,10 +288,10 @@ export class UsersService {
 
   /** Lista achatada dos indicados (até 5 níveis) com email/status/data/ganho reais — usada em GET /referrals. */
   async getReferralListFlat(userId: number): Promise<
-    Array<{ name: string; email: string; phone: string; plan: string; level: string; status: string; date: string; gain: string; referredBy: string }>
+    Array<{ name: string; email: string; phone: string; plan: string; level: string; status: string; date: string; gain: string; bonus: string | null; referredBy: string }>
   > {
     const config = await this.getConfig();
-    const rows: Array<{ name: string; email: string; phone: string; plan: string; level: string; status: string; date: string; gain: string; referredBy: string }> = [];
+    const rows: Array<{ name: string; email: string; phone: string; plan: string; level: string; status: string; date: string; gain: string; bonus: string | null; referredBy: string }> = [];
     const root = await this.usersRepo.findOne({ where: { id: userId } });
 
     const walk = async (parentId: number, parentName: string, level: number): Promise<void> => {
@@ -312,6 +312,8 @@ export class UsersService {
           status: child.status,
           date: formatDate(child.createdAt),
           gain: gain > 0 ? `R$ ${gain.toFixed(2).replace('.', ',')}` : '-',
+          // Nível 1 direto (indicação sua) que rendeu o bônus de R$30 do primeiro mês.
+          bonus: level === 1 && child.referralBonusPaid ? 'R$ 30,00' : null,
           referredBy: parentName,
         });
         await walk(child.id, child.name, level + 1);
