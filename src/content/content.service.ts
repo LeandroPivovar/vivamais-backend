@@ -52,16 +52,32 @@ export class ContentService {
   getSlides() {
     return [
       {
+        tag: 'SAÚDE',
         title: 'Consultas de Telemedicina 24h',
         description: 'Fale com um médico a qualquer hora, sem sair de casa.',
-        image: 'telemedicina.png',
-        tag: 'Saúde',
+        image: '/telemedicina-banner.png',
+        benefit: 'Telemedicina',
       },
       {
-        title: 'Clube de Descontos',
-        description: 'Economize em farmácias, exames, educação e lazer.',
-        image: 'clube.png',
-        tag: 'Economia',
+        tag: 'PET',
+        title: 'Consultas Veterinárias 24h',
+        description: 'Fale com um veterinário a qualquer hora, sem sair de casa.',
+        image: '/pet-banner.png',
+        benefit: 'Veterinário 24h',
+      },
+      {
+        tag: 'ECONOMIA',
+        title: 'Clube de Descontos Exclusivo',
+        description: 'Economize até 50% em farmácias, compras, lazer e parceiros.',
+        image: '/clube_banner.png',
+        benefit: 'Clube de Descontos',
+      },
+      {
+        tag: 'CONSULTAS & EXAMES',
+        title: 'Consultas e Exames',
+        description: 'Agende consultas e exames pelo app Nipomed no seu celular.',
+        image: '/saude_banner.png',
+        benefit: 'Consultas e exames',
       },
     ];
   }
