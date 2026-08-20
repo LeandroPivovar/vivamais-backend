@@ -88,7 +88,7 @@ export class MailService {
       `
         <p>Olá, ${name}.</p>
         <p>Sua conta foi criada. Use a senha temporária abaixo para acessar em
-          <a href="https://conta.vivamaisclub.com">conta.vivamaisclub.com</a>:</p>
+          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>:</p>
         <p style="text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 3px; color: #215cff; margin: 24px 0;">
           ${password}
         </p>
@@ -105,7 +105,7 @@ export class MailService {
       `
         <p>Olá, ${name}.</p>
         <p>Uma nova senha foi gerada para sua conta. Use-a para acessar em
-          <a href="https://conta.vivamaisclub.com">conta.vivamaisclub.com</a>:</p>
+          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>:</p>
         <p style="text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 3px; color: #215cff; margin: 24px 0;">
           ${password}
         </p>
@@ -123,7 +123,7 @@ export class MailService {
         <p>Olá, ${name}.</p>
         <p>Recebemos o pagamento da sua assinatura <strong>${plan}</strong> no valor de <strong>${value}</strong>.</p>
         <p>Seu plano está <strong>ativo</strong> — acesse seus benefícios em
-          <a href="https://conta.vivamaisclub.com">conta.vivamaisclub.com</a>.</p>
+          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
       `,
     );
     await this.send(to, 'Pagamento confirmado — Viva Mais Club', html);

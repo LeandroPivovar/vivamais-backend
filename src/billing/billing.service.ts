@@ -22,7 +22,7 @@ import { PayDto } from './dto/pay.dto';
 import { basePriceForPlan } from '../common/pricing';
 import { onlyDigits, formatBrazilPhone } from '../common/phone';
 
-const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.com';
+const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.net';
 // Teto de tentativas de cadastro na telemedicina antes de o cron desistir do registro.
 const MAX_TELEMED_ATTEMPTS = 5;
 

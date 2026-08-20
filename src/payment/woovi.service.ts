@@ -18,7 +18,7 @@ import { AppConfig } from '../admin/entities/config.entity';
 
 const PROD_BASE = 'https://api.woovi.com/api/v1';
 const SANDBOX_BASE = 'https://api.woovi-sandbox.com/api/v1';
-const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.com';
+const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.net';
 const WEBHOOK_URL = `${PUBLIC_URL}/api/billing/webhook/woovi`;
 // Eventos do Pix Automático que precisamos escutar.
 const WEBHOOK_EVENTS = [
