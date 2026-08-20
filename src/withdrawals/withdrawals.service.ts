@@ -97,6 +97,19 @@ export class WithdrawalsService {
     );
 
     const user = await this.usersService.findById(userId);
+
+    // Confirmação por e-mail. Best-effort: o pedido vale mesmo se o e-mail falhar.
+    try {
+      await this.mailService.sendWithdrawalRequested(
+        user.email,
+        user.name,
+        money(Number(saved.amount)),
+        { id: saved.id, requestedAt: saved.createdAt },
+      );
+    } catch (err) {
+      this.logger.warn(`Falha ao enviar e-mail de pedido de saque #${saved.id}: ${(err as Error).message}`);
+    }
+
     // Avisa o grupo no WhatsApp. Best-effort: o pedido vale mesmo se a notificação falhar.
     void this.notifications.notifyWithdrawalRequested({
       id: saved.id,
@@ -163,6 +176,7 @@ export class WithdrawalsService {
           withdrawal.user.email,
           withdrawal.user.name,
           money(Number(withdrawal.amount)),
+          { id: withdrawal.id, requestedAt: withdrawal.createdAt, paidAt: withdrawal.paidAt },
         );
       } catch (err) {
         this.logger.warn(`Falha ao enviar e-mail de saque #${id}: ${(err as Error).message}`);

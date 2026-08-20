@@ -1,6 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 
+/** DD/MM/AAAA às HH:MM no fuso de São Paulo (e-mails vão para clientes no Brasil). */
+function formatDateTime(date: Date): string {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '-';
+  return d
+    .toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    .replace(',', ' às');
+}
+
 /**
  * Envio de e-mail via SMTP. Gated por env: sem SMTP_HOST/SMTP_USER/SMTP_PASS o
  * serviço vira no-op (só loga), então dev/local roda sem quebrar. Em produção as
@@ -129,17 +145,73 @@ export class MailService {
     await this.send(to, 'Pagamento confirmado — Viva Mais Club', html);
   }
 
+  /** Bloco de detalhes (rótulo → valor) usado nos e-mails de saque. */
+  private detailsBox(rows: Array<[string, string]>): string {
+    const lines = rows
+      .map(
+        ([label, value], i) => `
+          <tr>
+            <td style="padding: 8px 0; font-size: 13px; color: #6b7280;${i > 0 ? ' border-top: 1px solid #f3f4f6;' : ''}">${label}</td>
+            <td style="padding: 8px 0; font-size: 14px; font-weight: bold; text-align: right;${i > 0 ? ' border-top: 1px solid #f3f4f6;' : ''}">${value}</td>
+          </tr>`,
+      )
+      .join('');
+    return `
+      <table style="width: 100%; border-collapse: collapse; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 16px; margin: 16px 0;">
+        ${lines}
+      </table>`;
+  }
+
+  /** Confirmação de que o pedido de saque entrou na fila (processamento às segundas). */
+  async sendWithdrawalRequested(
+    to: string,
+    name: string,
+    value: string,
+    details: { id: number; requestedAt: Date },
+  ): Promise<void> {
+    const html = this.wrap(
+      'Saque solicitado!',
+      `
+        <p>Olá, ${name}.</p>
+        <p>Recebemos seu pedido de saque das suas comissões de indicação.</p>
+        ${this.detailsBox([
+          ['Valor solicitado', `<span style="color: #059669;">${value}</span>`],
+          ['Protocolo', `#${details.id}`],
+          ['Data do pedido', formatDateTime(details.requestedAt)],
+          ['Status', '<span style="color: #d97706;">Pendente</span>'],
+        ])}
+        <p>Os saques são processados <strong>toda segunda-feira</strong>. Assim que o pagamento
+          for realizado, você receberá um novo e-mail de confirmação.</p>
+        <p>Acompanhe seus ganhos em
+          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
+      `,
+    );
+    await this.send(to, `Saque solicitado (${value}) — Viva Mais Club`, html);
+  }
+
   /** Aviso de que o saque solicitado foi liberado (admin deu baixa). */
-  async sendWithdrawalPaid(to: string, name: string, value: string): Promise<void> {
+  async sendWithdrawalPaid(
+    to: string,
+    name: string,
+    value: string,
+    details: { id: number; requestedAt: Date; paidAt: Date },
+  ): Promise<void> {
     const html = this.wrap(
       'Saque realizado!',
       `
         <p>Olá, ${name}.</p>
-        <p>Seu saque no valor de <strong>${value}</strong> foi <strong>realizado</strong>.</p>
-        <p>O valor será creditado na conta informada. Acompanhe seus ganhos em
+        <p>Seu saque foi <strong>processado</strong> e o valor será creditado na conta informada.</p>
+        ${this.detailsBox([
+          ['Valor pago', `<span style="color: #059669;">${value}</span>`],
+          ['Protocolo', `#${details.id}`],
+          ['Data do pedido', formatDateTime(details.requestedAt)],
+          ['Data do pagamento', formatDateTime(details.paidAt)],
+          ['Status', '<span style="color: #059669;">Pago</span>'],
+        ])}
+        <p>Acompanhe seus ganhos em
           <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
       `,
     );
-    await this.send(to, 'Saque realizado — Viva Mais Club', html);
+    await this.send(to, `Saque realizado (${value}) — Viva Mais Club`, html);
   }
 }
