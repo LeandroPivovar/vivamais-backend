@@ -178,6 +178,23 @@ export class NotificationsService {
     );
   }
 
+  /** Pedido de saque de comissão — vai pro grupo de tecnologia/financeiro. */
+  async notifyWithdrawalRequested(payload: { id: number; client?: string | null; cpf?: string | null; value: number }) {
+    if (!this.once(`withdrawal:${payload.id}`)) return;
+    await this.sendText(
+      [
+        '*SAQUE SOLICITADO*',
+        '',
+        `Pedido: #${payload.id}`,
+        `Cliente: ${payload.client ?? '-'}`,
+        `CPF: ${payload.cpf ?? '-'}`,
+        `Valor: ${money(payload.value)}`,
+        '',
+        'Dar baixa no painel do admin (aba Saques).',
+      ].join('\n'),
+    );
+  }
+
   async notifyTicketOpened(payload: TicketPayload) {
     if (!this.once(`ticket-open:${payload.id}`)) return;
     await this.sendText(

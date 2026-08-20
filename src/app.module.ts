@@ -29,6 +29,8 @@ import { Ticket } from './tickets/entities/ticket.entity';
 import { TicketMessage } from './tickets/entities/ticket-message.entity';
 import { ChatConversation } from './chat/entities/chat-conversation.entity';
 import { ChatMessage } from './chat/entities/chat-message.entity';
+import { WithdrawalsModule } from './withdrawals/withdrawals.module';
+import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
 
 @Module({
   imports: [
@@ -41,7 +43,7 @@ import { ChatMessage } from './chat/entities/chat-message.entity';
       username: process.env.DB_USERNAME ?? 'root',
       password: process.env.DB_PASSWORD ?? '',
       database: process.env.DB_DATABASE ?? 'acesso_saude',
-      entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage],
+      entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal],
       synchronize: false,
       migrationsRun: false,
     }),
@@ -63,6 +65,7 @@ import { ChatMessage } from './chat/entities/chat-message.entity';
     ChatModule,
     UploadsModule,
     NotificationsModule,
+    WithdrawalsModule,
   ],
 })
 export class AppModule {}

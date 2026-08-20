@@ -128,4 +128,18 @@ export class MailService {
     );
     await this.send(to, 'Pagamento confirmado — Viva Mais Club', html);
   }
+
+  /** Aviso de que o saque solicitado foi liberado (admin deu baixa). */
+  async sendWithdrawalPaid(to: string, name: string, value: string): Promise<void> {
+    const html = this.wrap(
+      'Saque realizado!',
+      `
+        <p>Olá, ${name}.</p>
+        <p>Seu saque no valor de <strong>${value}</strong> foi <strong>realizado</strong>.</p>
+        <p>O valor será creditado na conta informada. Acompanhe seus ganhos em
+          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
+      `,
+    );
+    await this.send(to, 'Saque realizado — Viva Mais Club', html);
+  }
 }
