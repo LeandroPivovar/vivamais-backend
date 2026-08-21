@@ -80,6 +80,27 @@ export class TelegramService {
     await this.broadcast(text);
   }
 
+  /** Pedido de saque de comissão — aguardando baixa no painel do admin. */
+  async notifyWithdrawalRequested(d: {
+    id: number;
+    client: string;
+    cpf?: string | null;
+    value: number;
+    platform?: string;
+  }): Promise<void> {
+    const value = `R$ ${Number(d.value).toFixed(2).replace('.', ',')}`;
+    const text =
+      `🏦 <b>Saque solicitado</b>\n` +
+      `🏷️ Plataforma: ${this.escape(d.platform ?? 'Viva Mais Club')}\n` +
+      `🔖 Pedido: #${d.id}\n` +
+      `👤 Cliente: ${this.escape(d.client)}\n` +
+      (d.cpf ? `🪪 CPF: ${this.escape(d.cpf)}\n` : '') +
+      `💰 Valor: ${value}\n` +
+      `⏳ Status: Pendente — dar baixa na aba Saques\n` +
+      `🕒 ${this.nowBr()}`;
+    await this.broadcast(text);
+  }
+
   /** Erro — vai pro chat principal E pro grupo de erros. */
   async notifyError(d: {
     context: string;

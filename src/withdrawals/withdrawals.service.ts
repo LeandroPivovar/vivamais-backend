@@ -6,6 +6,7 @@ import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TelegramService } from '../telegram/telegram.service';
 
 /** Valor mínimo para solicitar um saque. */
 const MIN_WITHDRAWAL = 20;
@@ -28,6 +29,7 @@ export class WithdrawalsService {
     private usersService: UsersService,
     private mailService: MailService,
     private notifications: NotificationsService,
+    private telegram: TelegramService,
   ) {}
 
   private toResponse(w: Withdrawal) {
@@ -110,8 +112,15 @@ export class WithdrawalsService {
       this.logger.warn(`Falha ao enviar e-mail de pedido de saque #${saved.id}: ${(err as Error).message}`);
     }
 
-    // Avisa o grupo no WhatsApp. Best-effort: o pedido vale mesmo se a notificação falhar.
+    // Avisa nos dois canais (WhatsApp/Z-API + Telegram). Best-effort: o pedido
+    // vale mesmo se as notificações falharem.
     void this.notifications.notifyWithdrawalRequested({
+      id: saved.id,
+      client: user.name,
+      cpf: user.cpf,
+      value: Number(saved.amount),
+    });
+    void this.telegram.notifyWithdrawalRequested({
       id: saved.id,
       client: user.name,
       cpf: user.cpf,
