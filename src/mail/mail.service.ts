@@ -167,7 +167,7 @@ export class MailService {
     to: string,
     name: string,
     value: string,
-    details: { id: number; requestedAt: Date },
+    details: { id: number; requestedAt: Date; pixKey?: string; pixKeyTypeLabel?: string },
   ): Promise<void> {
     const html = this.wrap(
       'Saque solicitado!',
@@ -177,9 +177,14 @@ export class MailService {
         ${this.detailsBox([
           ['Valor solicitado', `<span style="color: #059669;">${value}</span>`],
           ['Protocolo', `#${details.id}`],
+          ...(details.pixKey
+            ? ([[`Chave PIX (${details.pixKeyTypeLabel ?? 'PIX'})`, details.pixKey]] as Array<[string, string]>)
+            : []),
           ['Data do pedido', formatDateTime(details.requestedAt)],
           ['Status', '<span style="color: #d97706;">Pendente</span>'],
         ])}
+        <p style="font-size: 13px; color: #6b7280;">Confira a chave PIX acima. Se estiver errada,
+          entre em contato com o suporte antes da segunda-feira.</p>
         <p>Os saques são processados <strong>toda segunda-feira</strong>. Assim que o pagamento
           for realizado, você receberá um novo e-mail de confirmação.</p>
         <p>Acompanhe seus ganhos em

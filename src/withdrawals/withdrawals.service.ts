@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, In, Repository } from 'typeorm';
-import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
+import { PixKeyType, Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
+import { CreateWithdrawalDto } from './dto/create-withdrawal.dto';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
@@ -17,6 +18,51 @@ function money(value: number): string {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+const PIX_KEY_LABELS: Record<PixKeyType, string> = {
+  cpf: 'CPF',
+  email: 'E-mail',
+  telefone: 'Telefone',
+  aleatoria: 'Chave aleatória',
+};
+
+/**
+ * Valida e normaliza a chave PIX conforme o tipo. CPF/telefone viram só dígitos
+ * (é como o banco espera), e-mail vira minúsculo. Erro aqui é do usuário, então
+ * a mensagem precisa dizer o que corrigir.
+ */
+function normalizePixKey(type: PixKeyType, raw: string): string {
+  const value = (raw ?? '').trim();
+
+  if (type === 'cpf') {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length !== 11) throw new BadRequestException('Chave PIX inválida: o CPF deve ter 11 dígitos.');
+    return digits;
+  }
+
+  if (type === 'telefone') {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 11) {
+      throw new BadRequestException('Chave PIX inválida: informe o telefone com DDD (10 ou 11 dígitos).');
+    }
+    return digits;
+  }
+
+  if (type === 'email') {
+    const email = value.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('Chave PIX inválida: informe um e-mail válido.');
+    }
+    return email;
+  }
+
+  // Aleatória (EVP): UUID de 32 hex, com ou sem hífens.
+  const evp = value.toLowerCase();
+  if (!/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/.test(evp)) {
+    throw new BadRequestException('Chave PIX inválida: a chave aleatória tem 32 caracteres (formato UUID).');
+  }
+  return evp;
 }
 
 @Injectable()
@@ -38,6 +84,9 @@ export class WithdrawalsService {
       amount: Number(w.amount),
       amountLabel: money(Number(w.amount)),
       status: w.status,
+      pixKey: w.pixKey,
+      pixKeyType: w.pixKeyType,
+      pixKeyTypeLabel: w.pixKeyType ? PIX_KEY_LABELS[w.pixKeyType] : null,
       createdAt: w.createdAt,
       paidAt: w.paidAt,
       user: w.user ? { id: w.user.id, name: w.user.name, email: w.user.email, cpf: w.user.cpf } : null,
@@ -82,7 +131,7 @@ export class WithdrawalsService {
   }
 
   /** Solicita o saque do saldo disponível inteiro. Um pedido pendente por vez. */
-  async request(userId: number) {
+  async request(userId: number, dto: CreateWithdrawalDto) {
     const summary = await this.summary(userId);
 
     if (summary.hasPending) {
@@ -94,8 +143,17 @@ export class WithdrawalsService {
       );
     }
 
+    // Valida antes de gravar — chave errada significa dinheiro indo pro lugar errado.
+    const pixKey = normalizePixKey(dto.pixKeyType, dto.pixKey);
+
     const saved = await this.withdrawalsRepo.save(
-      this.withdrawalsRepo.create({ userId, amount: summary.available, status: 'pendente' }),
+      this.withdrawalsRepo.create({
+        userId,
+        amount: summary.available,
+        status: 'pendente',
+        pixKeyType: dto.pixKeyType,
+        pixKey,
+      }),
     );
 
     const user = await this.usersService.findById(userId);
@@ -106,7 +164,12 @@ export class WithdrawalsService {
         user.email,
         user.name,
         money(Number(saved.amount)),
-        { id: saved.id, requestedAt: saved.createdAt },
+        {
+          id: saved.id,
+          requestedAt: saved.createdAt,
+          pixKey,
+          pixKeyTypeLabel: PIX_KEY_LABELS[dto.pixKeyType],
+        },
       );
     } catch (err) {
       this.logger.warn(`Falha ao enviar e-mail de pedido de saque #${saved.id}: ${(err as Error).message}`);
@@ -114,18 +177,16 @@ export class WithdrawalsService {
 
     // Avisa nos dois canais (WhatsApp/Z-API + Telegram). Best-effort: o pedido
     // vale mesmo se as notificações falharem.
-    void this.notifications.notifyWithdrawalRequested({
+    const notifyPayload = {
       id: saved.id,
       client: user.name,
       cpf: user.cpf,
       value: Number(saved.amount),
-    });
-    void this.telegram.notifyWithdrawalRequested({
-      id: saved.id,
-      client: user.name,
-      cpf: user.cpf,
-      value: Number(saved.amount),
-    });
+      pixKey,
+      pixKeyTypeLabel: PIX_KEY_LABELS[dto.pixKeyType],
+    };
+    void this.notifications.notifyWithdrawalRequested(notifyPayload);
+    void this.telegram.notifyWithdrawalRequested(notifyPayload);
 
     this.logger.log(`Saque solicitado: #${saved.id}, user ${userId}, ${money(Number(saved.amount))}.`);
     return { withdrawal: this.toResponse(saved), summary: await this.summary(userId) };

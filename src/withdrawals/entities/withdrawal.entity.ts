@@ -12,6 +12,9 @@ import { DecimalTransformer } from '../../common/decimal.transformer';
 /** pendente = aguardando o admin dar baixa | pago = saque efetuado. */
 export type WithdrawalStatus = 'pendente' | 'pago';
 
+/** Tipos de chave PIX aceitos no pedido de saque. */
+export type PixKeyType = 'cpf' | 'email' | 'telefone' | 'aleatoria';
+
 @Entity('withdrawals')
 export class Withdrawal {
   @PrimaryGeneratedColumn()
@@ -30,6 +33,13 @@ export class Withdrawal {
 
   @Column({ type: 'varchar', length: 20, default: 'pendente' })
   status: WithdrawalStatus;
+
+  /** Chave PIX de destino — nula nos pedidos anteriores à criação do campo. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  pixKeyType: PixKeyType | null;
+
+  @Column({ type: 'varchar', length: 140, nullable: true })
+  pixKey: string | null;
 
   @Column({ type: 'datetime', nullable: true })
   paidAt: Date | null;

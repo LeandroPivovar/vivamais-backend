@@ -1,7 +1,8 @@
-import { Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { WithdrawalsService } from './withdrawals.service';
+import { CreateWithdrawalDto } from './dto/create-withdrawal.dto';
 
 @Controller('withdrawals')
 @UseGuards(JwtAuthGuard)
@@ -22,7 +23,7 @@ export class WithdrawalsController {
   /** Solicita o saque do saldo disponível (vira pendente até o admin dar baixa). */
   @Post()
   @HttpCode(200)
-  request(@CurrentUser() authUser: { id: number }) {
-    return this.withdrawals.request(authUser.id);
+  request(@CurrentUser() authUser: { id: number }, @Body() dto: CreateWithdrawalDto) {
+    return this.withdrawals.request(authUser.id, dto);
   }
 }

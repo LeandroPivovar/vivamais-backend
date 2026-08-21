@@ -86,6 +86,8 @@ export class TelegramService {
     client: string;
     cpf?: string | null;
     value: number;
+    pixKey?: string | null;
+    pixKeyTypeLabel?: string | null;
     platform?: string;
   }): Promise<void> {
     const value = `R$ ${Number(d.value).toFixed(2).replace('.', ',')}`;
@@ -96,6 +98,9 @@ export class TelegramService {
       `👤 Cliente: ${this.escape(d.client)}\n` +
       (d.cpf ? `🪪 CPF: ${this.escape(d.cpf)}\n` : '') +
       `💰 Valor: ${value}\n` +
+      (d.pixKey
+        ? `🔑 Chave PIX (${this.escape(d.pixKeyTypeLabel ?? 'PIX')}): <code>${this.escape(d.pixKey)}</code>\n`
+        : '') +
       `⏳ Status: Pendente — dar baixa na aba Saques\n` +
       `🕒 ${this.nowBr()}`;
     await this.broadcast(text);

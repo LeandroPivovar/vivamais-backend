@@ -179,7 +179,14 @@ export class NotificationsService {
   }
 
   /** Pedido de saque de comissão — vai pro grupo de tecnologia/financeiro. */
-  async notifyWithdrawalRequested(payload: { id: number; client?: string | null; cpf?: string | null; value: number }) {
+  async notifyWithdrawalRequested(payload: {
+    id: number;
+    client?: string | null;
+    cpf?: string | null;
+    value: number;
+    pixKey?: string | null;
+    pixKeyTypeLabel?: string | null;
+  }) {
     if (!this.once(`withdrawal:${payload.id}`)) return;
     await this.sendText(
       [
@@ -189,6 +196,7 @@ export class NotificationsService {
         `Cliente: ${payload.client ?? '-'}`,
         `CPF: ${payload.cpf ?? '-'}`,
         `Valor: ${money(payload.value)}`,
+        `Chave PIX (${payload.pixKeyTypeLabel ?? '-'}): ${payload.pixKey ?? '-'}`,
         '',
         'Dar baixa no painel do admin (aba Saques).',
       ].join('\n'),
