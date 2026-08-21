@@ -7,12 +7,13 @@ import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 import { ChatController } from './chat.controller';
 import { AdminChatController } from './admin-chat.controller';
+import { jwtSecret } from '../common/security';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ChatConversation, ChatMessage]),
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'change-me-in-production',
+      secret: jwtSecret(),
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN ?? '8h' },
     }),
   ],

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ActivitiesModule } from '../activities/activities.module';
+import { jwtSecret } from '../common/security';
 import { SsoController } from './sso.controller';
 import { SsoService } from './sso.service';
 
@@ -8,7 +9,7 @@ import { SsoService } from './sso.service';
   imports: [
     ActivitiesModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'change-me-in-production',
+      secret: jwtSecret(),
     }),
   ],
   controllers: [SsoController],

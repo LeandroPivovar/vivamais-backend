@@ -7,6 +7,7 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
+import { corsAllowedOrigins } from '../common/public-url';
 import { ChatService } from './chat.service';
 
 /**
@@ -14,7 +15,7 @@ import { ChatService } from './chat.service';
  * Rooms: `conv:{id}` (participantes de uma conversa) e `admins` (todos os admins,
  * recebem atualização de lista + contador de não-lidas / bolinha azul).
  */
-@WebSocketGateway({ cors: { origin: true, credentials: true } })
+@WebSocketGateway({ cors: { origin: corsAllowedOrigins(), credentials: true } })
 export class ChatGateway implements OnGatewayConnection {
   @WebSocketServer() server: Server;
 
