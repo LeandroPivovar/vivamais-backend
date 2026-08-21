@@ -124,6 +124,20 @@ export class DependentsService {
       // cadastro segue mesmo se o e-mail falhar; a senha pode ser reenviada depois
     }
 
+    // Boas-vindas do Viva Kids/Teens conforme a idade do dependente. O texto do Kids
+    // fala com o titular ("foi ativado para <dependente>"), então vai para o e-mail
+    // dele; o do Teens fala direto com o adolescente. Best-effort, como o de cima.
+    const group = ageGroup(saved.birthDate);
+    try {
+      if (group === 'kids') {
+        await this.mailService.sendVivaKidsWelcome(holder.email, holder.name, saved.name);
+      } else if (group === 'teen') {
+        await this.mailService.sendVivaTeensWelcome(saved.email, saved.name);
+      }
+    } catch {
+      // e-mail promocional não pode derrubar o cadastro do dependente
+    }
+
     // Cadastro do dependente na telemedicina (Vencca) -- herda o endereço do titular
     // (mesmo domicílio). Best-effort: dependente segue criado mesmo se a Vencca falhar
     // (o admin pode reprocessar depois, igual ao fluxo do titular).
