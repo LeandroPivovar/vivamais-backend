@@ -6,6 +6,25 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { UPLOADS_DIR, UPLOADS_PUBLIC_PREFIX } from './common/uploads.constant';
 
+/**
+ * Domínios oficiais do portal — sempre liberados no CORS, independente do
+ * CORS_ORIGIN do .env. Servimos o app nos dois (.net é o ativo; o .com fica
+ * para quando o DNS voltar), e um .env desatualizado aqui derruba o checkout
+ * inteiro no browser com "Failed to fetch".
+ */
+const DEFAULT_ORIGINS = [
+  'https://conta.vivamaisclub.net',
+  'https://conta.vivamaisclub.com',
+];
+
+function corsOrigins(): string[] {
+  const fromEnv = (process.env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+  return [...new Set([...DEFAULT_ORIGINS, ...fromEnv])];
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   // Atrás do nginx, sem isto o @Ip() devolve o IP do proxy — e a Veenca exige o IPv4
@@ -19,7 +38,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') ?? true,
+    origin: corsOrigins(),
     credentials: true,
   });
   const port = process.env.PORT ?? 3011;
