@@ -116,10 +116,11 @@ export class DependentsService {
       accessFuneral: false,
     });
     const saved = await this.usersRepo.save(dependent);
+    const group = ageGroup(saved.birthDate);
 
-    // Envia o convite (link do portal + senha aleatória) por e-mail. Best-effort.
+    // Envia o convite de dependente (link do portal + senha aleatória) por e-mail. Best-effort.
     try {
-      await this.mailService.sendWelcomePassword(saved.email, saved.name, password);
+      await this.mailService.sendDependentWelcomePassword(saved.email, saved.name, holder.name, password, group);
     } catch {
       // cadastro segue mesmo se o e-mail falhar; a senha pode ser reenviada depois
     }
@@ -127,7 +128,6 @@ export class DependentsService {
     // Boas-vindas do Viva Kids/Teens conforme a idade do dependente. O texto do Kids
     // fala com o titular ("foi ativado para <dependente>"), então vai para o e-mail
     // dele; o do Teens fala direto com o adolescente. Best-effort, como o de cima.
-    const group = ageGroup(saved.birthDate);
     try {
       if (group === 'kids') {
         await this.mailService.sendVivaKidsWelcome(holder.email, holder.name, saved.name);

@@ -133,6 +133,33 @@ export class MailService {
     await this.send(to, 'Sua senha de acesso — Viva Mais Club', html);
   }
 
+  /** Dependente cadastrado pelo titular — informa acesso e senha temporária ao próprio dependente. */
+  async sendDependentWelcomePassword(
+    to: string,
+    dependentName: string,
+    holderName: string,
+    password: string,
+    group: 'kids' | 'teen' | 'adult' | null,
+  ): Promise<void> {
+    const loginPath = group === 'kids' ? '/kids/auth' : group === 'teen' ? '/teen/auth' : '';
+    const loginUrl = `${PORTAL_URL}${loginPath}`;
+    const html = this.kidsTeensShell({
+      title: 'Boas-vindas | Viva Mais Club',
+      eyebrow: group === 'kids' ? 'Viva Kids' : group === 'teen' ? 'Viva Teens' : 'Dependente',
+      heading: 'Você foi cadastrado(a) como dependente!',
+      bodyHtml:
+        this.p(
+          `Olá, <strong>${escapeHtml(dependentName)}</strong>! <strong>${escapeHtml(holderName)}</strong> cadastrou você como dependente no Viva Mais Club.`,
+        ) +
+        this.p('Seu acesso já está disponível. Use a senha temporária abaixo quando for solicitado:') +
+        `<div style="margin:22px 0;padding:18px;border:1px solid #b8ece8;border-radius:12px;background:#f2fbfa;text-align:center;font-family:Montserrat,Arial,sans-serif;font-size:26px;font-weight:700;letter-spacing:4px;color:#002e73">${escapeHtml(password)}</div>` +
+        this.p('Recomendamos trocar a senha após o primeiro acesso, quando essa opção estiver disponível na sua área de conta.'),
+      ctaLabel: group === 'kids' ? 'Acessar login Kids →' : group === 'teen' ? 'Acessar login Teen →' : 'Acessar minha conta →',
+      ctaUrl: loginUrl,
+    });
+    await this.send(to, 'Você foi cadastrado(a) como dependente — Viva Mais Club', html);
+  }
+
   /** Nova senha gerada pelo admin (botão "gerar nova senha"). */
   async sendNewPassword(to: string, name: string, password: string): Promise<void> {
     const html = this.wrap(
