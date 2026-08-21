@@ -10,6 +10,7 @@ import { VenccaService } from '../vencca/vencca.service';
 import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { MailService } from '../mail/mail.service';
 import { mmnForPlan, basePriceForPlan } from '../common/pricing';
+import { ageGroup } from '../common/age';
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('pt-BR');
@@ -117,7 +118,12 @@ export class AdminService {
     const user = await this.usersService.findById(id);
     const password = generatePassword();
     await this.usersService.setPassword(id, password);
-    await this.mailService.sendNewPassword(user.email, user.name, password);
+    if (user.holderId) {
+      const holder = await this.usersService.findById(user.holderId);
+      await this.mailService.sendDependentWelcomePassword(user.email, user.name, holder.name, password, ageGroup(user.birthDate));
+    } else {
+      await this.mailService.sendNewPassword(user.email, user.name, password);
+    }
     return { password, email: user.email, name: user.name };
   }
 

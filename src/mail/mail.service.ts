@@ -70,8 +70,19 @@ export class MailService {
       return;
     }
     try {
-      await this.transporter.sendMail({ from: this.from, to, subject, html });
-      this.logger.log(`E-mail enviado para ${to}: ${subject}`);
+      const info = (await this.transporter.sendMail({ from: this.from, to, subject, html })) as {
+        messageId?: string;
+        accepted?: string[];
+        rejected?: string[];
+      };
+      const accepted = info.accepted?.length ?? 0;
+      const rejected = info.rejected?.length ?? 0;
+      const suffix = `messageId=${info.messageId ?? '-'} accepted=${accepted} rejected=${rejected}`;
+      if (rejected > 0) {
+        this.logger.warn(`E-mail com rejeição para ${to}: ${subject} (${suffix})`);
+      } else {
+        this.logger.log(`E-mail enviado para ${to}: ${subject} (${suffix})`);
+      }
     } catch (err) {
       // Não estoura pro fluxo do usuário — cadastro/reset não deve falhar por causa do e-mail.
       this.logger.error(`Falha ao enviar e-mail para ${to}: ${(err as Error).message}`);
