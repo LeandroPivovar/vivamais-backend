@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AppConfig } from '../admin/entities/config.entity';
+import { publicUrl } from '../common/public-url';
 
 /**
  * Integração com a Woovi/OpenPix — Pix Automático (débito automático do Banco Central).
@@ -18,8 +19,7 @@ import { AppConfig } from '../admin/entities/config.entity';
 
 const PROD_BASE = 'https://api.woovi.com/api/v1';
 const SANDBOX_BASE = 'https://api.woovi-sandbox.com/api/v1';
-const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.net';
-const WEBHOOK_URL = `${PUBLIC_URL}/api/billing/webhook/woovi`;
+const WEBHOOK_URL = publicUrl('/api/billing/webhook/woovi');
 // Eventos do Pix Automático que precisamos escutar.
 const WEBHOOK_EVENTS = [
   'PIX_AUTOMATIC_COBR_COMPLETED',

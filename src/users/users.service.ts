@@ -10,6 +10,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { basePriceForPlan, mmnForPlan } from '../common/pricing';
 import { MailService } from '../mail/mail.service';
+import { ageGroup } from '../common/age';
 
 const MODULE_PRICE_KEYS: Array<keyof AppConfig['modules']> = ['health', 'clube', 'pet', 'funeral'];
 const LEVEL_LABELS = ['1º Nível', '2º Nível', '3º Nível', '4º Nível', '5º Nível'];
@@ -64,6 +65,7 @@ export class UsersService {
       active: user.status === 'ativo',
       role: user.role,
       isDependent: user.holderId != null,
+      ageGroup: ageGroup(user.birthDate),
       memberSince: formatDate(user.createdAt),
       address: user.address,
       neighborhood: user.neighborhood,

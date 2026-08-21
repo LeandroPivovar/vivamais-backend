@@ -6,24 +6,13 @@ import { AppConfig } from '../admin/entities/config.entity';
 import { UsersService } from '../users/users.service';
 import { CreateLinkDto } from './dto/create-link.dto';
 import { UpdateLinkDto } from './dto/update-link.dto';
+import { publicBaseOrigin, publicCompatOrigins, publicUrl, withPublicOrigin } from '../common/public-url';
 
 const PAYMENT_LABELS: Record<string, string> = {
   ambos: 'Cartão ou PIX',
   cartao: 'Apenas Cartão',
   pix: 'Apenas PIX',
 };
-
-/**
- * .net é o domínio funcional (DNS do .com caiu). Mantemos os dois pra quem já
- * compartilhou link antigo em .com continuar funcionando quando o DNS voltar,
- * e pra mostrar ambos na tela de indicações.
- */
-const PRIMARY_DOMAIN = 'conta.vivamaisclub.net';
-const ALT_DOMAIN = 'conta.vivamaisclub.com';
-
-function withHost(url: string, host: string): string {
-  return url.replace(/^https:\/\/[^/]+/, `https://${host}`);
-}
 
 function slugify(text: string): string {
   return text
@@ -50,8 +39,9 @@ export class ReferralsService {
       payment: link.payment,
       // Normaliza pro domínio funcional independente do que estiver salvo (links
       // antigos podem ter sido gerados com .com, antes do DNS cair).
-      url: withHost(link.url, PRIMARY_DOMAIN),
-      urlAlt: withHost(link.url, ALT_DOMAIN),
+      url: withPublicOrigin(link.url),
+      urlAlt: withPublicOrigin(link.url, publicCompatOrigins().find((origin) => origin !== publicBaseOrigin()) ?? publicBaseOrigin()),
+      urls: publicCompatOrigins().map((origin) => withPublicOrigin(link.url, origin)),
       cliques: link.cliques,
       conversoes: link.conversoes,
       comissao: `R$ ${Number(link.comissao).toFixed(2).replace('.', ',')}`,
@@ -104,7 +94,7 @@ export class ReferralsService {
             desc: `Link de indicação do Plano ${plan}`,
             price: `R$ ${price.toFixed(2).replace('.', ',')}/mês`,
             payment: PAYMENT_LABELS.ambos,
-            url: `https://${PRIMARY_DOMAIN}/plano-${slugify(plan)}?ref=${refCode}`,
+            url: publicUrl(`/plano-${slugify(plan)}?ref=${refCode}`),
             cliques: 0,
             conversoes: 0,
             comissao: 0,
@@ -141,7 +131,7 @@ export class ReferralsService {
       desc: 'Link de checkout personalizado',
       price: `R$ ${price.toFixed(2).replace('.', ',')}/mês`,
       payment: PAYMENT_LABELS[dto.paymentMethod],
-      url: `https://${PRIMARY_DOMAIN}/plano-${slug}?ref=${dto.refCode}`,
+      url: publicUrl(`/plano-${slug}?ref=${dto.refCode}`),
       cliques: 0,
       conversoes: 0,
       comissao: 0,
@@ -159,7 +149,7 @@ export class ReferralsService {
     link.name = dto.name;
     link.planType = dto.planType;
     link.status = dto.status;
-    link.url = `https://${PRIMARY_DOMAIN}/plano-${slug}?ref=${dto.refCode}`;
+    link.url = publicUrl(`/plano-${slug}?ref=${dto.refCode}`);
     return this.toLinkResponse(await this.linksRepo.save(link));
   }
 

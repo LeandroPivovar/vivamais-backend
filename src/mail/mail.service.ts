@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { publicBaseOrigin } from '../common/public-url';
 
 /** Base pública do portal — usada nos links e nas imagens hospedadas dos e-mails. */
-const PORTAL_URL = (process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.net').replace(/\/+$/, '');
+const PORTAL_URL = publicBaseOrigin();
 
 /** DD/MM/AAAA às HH:MM no fuso de São Paulo (e-mails vão para clientes no Brasil). */
 function formatDateTime(date: Date): string {
@@ -18,6 +19,15 @@ function formatDateTime(date: Date): string {
       minute: '2-digit',
     })
     .replace(',', ' às');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -113,7 +123,7 @@ export class MailService {
       `
         <p>Olá, ${name}.</p>
         <p>Sua conta foi criada. Use a senha temporária abaixo para acessar em
-          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>:</p>
+          <a href="${PORTAL_URL}">${PORTAL_URL.replace(/^https?:\/\//, '')}</a>:</p>
         <p style="text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 3px; color: #215cff; margin: 24px 0;">
           ${password}
         </p>
@@ -130,7 +140,7 @@ export class MailService {
       `
         <p>Olá, ${name}.</p>
         <p>Uma nova senha foi gerada para sua conta. Use-a para acessar em
-          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>:</p>
+          <a href="${PORTAL_URL}">${PORTAL_URL.replace(/^https?:\/\//, '')}</a>:</p>
         <p style="text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 3px; color: #215cff; margin: 24px 0;">
           ${password}
         </p>
@@ -191,7 +201,7 @@ export class MailService {
         <p>Os saques são processados <strong>toda segunda-feira</strong>. Assim que o pagamento
           for realizado, você receberá um novo e-mail de confirmação.</p>
         <p>Acompanhe seus ganhos em
-          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
+          <a href="${PORTAL_URL}">${PORTAL_URL.replace(/^https?:\/\//, '')}</a>.</p>
       `,
     );
     await this.send(to, `Saque solicitado (${value}) — Viva Mais Club`, html);
@@ -293,6 +303,41 @@ ${opts.heroHtml ?? ''}
   /** Parágrafo no estilo do corpo dos templates. */
   private p(html: string): string {
     return `<p style="margin:0 0 16px;font-size:15px;line-height:24px;color:#24313d">${html}</p>`;
+  }
+
+  /** Herdeiro cadastrado — e-mail para a pessoa escolhida pelo titular. */
+  async sendHeirSelectedToHeir(to: string, heirName: string, ownerName: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Você foi selecionado | Viva Mais Club',
+      eyebrow: 'Herdeiro da conta',
+      heading: 'Você foi selecionado!',
+      bodyHtml:
+        this.p(
+          `<strong>${escapeHtml(heirName)}</strong>, você foi selecionado como herdeiro por <strong>${escapeHtml(ownerName)}</strong>.`,
+        ) +
+        this.p('Você agora faz parte da conta e poderá acompanhar os benefícios que foram disponibilizados para você.'),
+      ctaLabel: 'Acessar minha conta →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Você foi selecionado como herdeiro — Viva Mais Club', html);
+  }
+
+  /** Herdeiro cadastrado — confirmação para o titular da conta. */
+  async sendHeirSelectedToOwner(to: string, ownerName: string, heirName: string): Promise<void> {
+    void ownerName;
+    const html = this.kidsTeensShell({
+      title: 'Herdeiro selecionado | Viva Mais Club',
+      eyebrow: 'Herdeiro da conta',
+      heading: 'Você selecionou seu herdeiro!',
+      bodyHtml:
+        this.p(
+          `Parabéns! <strong>${escapeHtml(heirName)}</strong> foi escolhido para fazer parte da sua história no Viva Mais Club.`,
+        ) +
+        this.p('Agora essa pessoa terá acesso às informações e aos benefícios definidos para a sua conta.'),
+      ctaLabel: 'Ver detalhes da conta →',
+      ctaUrl: `${PORTAL_URL}/herdeiro`,
+    });
+    await this.send(to, 'Herdeiro selecionado — Viva Mais Club', html);
   }
 
   /** Comissão processada — enviado ao indicador quando um indicado dele paga. */

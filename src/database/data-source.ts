@@ -10,6 +10,7 @@ import { Ticket } from '../tickets/entities/ticket.entity';
 import { TicketMessage } from '../tickets/entities/ticket-message.entity';
 import { ChatConversation } from '../chat/entities/chat-conversation.entity';
 import { ChatMessage } from '../chat/entities/chat-message.entity';
+import { Heir } from '../heirs/entities/heir.entity';
 
 config();
 
@@ -20,7 +21,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME ?? 'root',
   password: process.env.DB_PASSWORD ?? '',
   database: process.env.DB_DATABASE ?? 'acesso_saude',
-  entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage],
+  entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Heir],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   synchronize: false,
 });

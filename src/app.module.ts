@@ -20,6 +20,7 @@ import { TicketsModule } from './tickets/tickets.module';
 import { ChatModule } from './chat/chat.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { HeirsModule } from './heirs/heirs.module';
 import { User } from './users/entities/user.entity';
 import { ReferralLink } from './referrals/entities/referral-link.entity';
 import { Transaction } from './billing/entities/transaction.entity';
@@ -31,6 +32,7 @@ import { ChatConversation } from './chat/entities/chat-conversation.entity';
 import { ChatMessage } from './chat/entities/chat-message.entity';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
+import { Heir } from './heirs/entities/heir.entity';
 
 @Module({
   imports: [
@@ -43,7 +45,7 @@ import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
       username: process.env.DB_USERNAME ?? 'root',
       password: process.env.DB_PASSWORD ?? '',
       database: process.env.DB_DATABASE ?? 'acesso_saude',
-      entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal],
+      entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal, Heir],
       synchronize: false,
       migrationsRun: false,
     }),
@@ -66,6 +68,7 @@ import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
     UploadsModule,
     NotificationsModule,
     WithdrawalsModule,
+    HeirsModule,
   ],
 })
 export class AppModule {}

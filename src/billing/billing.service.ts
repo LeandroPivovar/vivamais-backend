@@ -21,8 +21,8 @@ import { CheckoutDto } from './dto/checkout.dto';
 import { PayDto } from './dto/pay.dto';
 import { basePriceForPlan } from '../common/pricing';
 import { onlyDigits, formatBrazilPhone } from '../common/phone';
+import { publicUrl } from '../common/public-url';
 
-const PUBLIC_URL = process.env.PUBLIC_URL ?? 'https://conta.vivamaisclub.net';
 // Teto de tentativas de cadastro na telemedicina antes de o cron desistir do registro.
 const MAX_TELEMED_ATTEMPTS = 5;
 
@@ -377,7 +377,7 @@ export class BillingService {
         state: dto.state,
         complement: dto.complement,
       },
-      callbackUrl: `${PUBLIC_URL}/api/billing/webhook/veenca`,
+      callbackUrl: publicUrl('/api/billing/webhook/veenca'),
       dueDate: dueDateInDays(3),
       clientIp,
       card:
@@ -641,7 +641,7 @@ export class BillingService {
         state: user.state,
         complement: user.complement,
       },
-      callbackUrl: `${PUBLIC_URL}/api/billing/webhook/veenca`,
+      callbackUrl: publicUrl('/api/billing/webhook/veenca'),
       dueDate: dueDateInDays(3),
       clientIp,
       card:

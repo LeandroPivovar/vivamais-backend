@@ -87,6 +87,8 @@ export class AuthService {
         id: user.id,
         name: user.name,
         isDependent: user.holderId != null,
+        ageGroup: group,
+        module: group,
       },
     };
   }
