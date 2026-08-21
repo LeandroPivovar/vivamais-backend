@@ -87,16 +87,22 @@ export class MailService {
 
   /** Código de recuperação de senha (login → "Esqueci a senha"). */
   async sendPasswordResetCode(to: string, name: string, code: string): Promise<void> {
-    const html = this.wrap(
-      'Recuperação de senha',
-      `
-        <p>Olá, ${name}.</p>
-        <p>Use o código abaixo para redefinir sua senha. Ele expira em 15 minutos.</p>
-        <p style="text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #215cff; margin: 24px 0;">
-          ${code}
-        </p>
-      `,
-    );
+    void name; // o template não usa saudação nominal
+    const html = this.kidsTeensShell({
+      title: 'Recuperação de senha | Viva Mais Club',
+      heading: 'Use o código abaixo para redefinir sua senha',
+      bodyHtml:
+        this.p('Recebemos uma solicitação para redefinir a senha da sua conta no Viva Mais Club.') +
+        this.p(
+          'Para continuar com a recuperação de acesso, utilize o código de verificação abaixo na tela de redefinição de senha.',
+        ) +
+        this.p(
+          'Por motivos de segurança, este código é válido por tempo limitado e pode ser utilizado apenas uma vez. Se você não solicitou a redefinição, desconsidere este e-mail.',
+        ) +
+        `<div style="margin:24px 0;padding:20px;border:1px solid #b8ece8;border-radius:12px;background:#f2fbfa;text-align:center;font-family:Montserrat,Arial,sans-serif;font-size:30px;font-weight:700;letter-spacing:9px;color:#002e73">${code}</div>`,
+      ctaLabel: 'Redefinir senha →',
+      ctaUrl: PORTAL_URL,
+    });
     await this.send(to, 'Seu código de recuperação — Viva Mais Club', html);
   }
 
@@ -198,23 +204,23 @@ export class MailService {
     value: string,
     details: { id: number; requestedAt: Date; paidAt: Date },
   ): Promise<void> {
-    const html = this.wrap(
-      'Saque realizado!',
-      `
-        <p>Olá, ${name}.</p>
-        <p>Seu saque foi <strong>processado</strong> e o valor será creditado na conta informada.</p>
-        ${this.detailsBox([
-          ['Valor pago', `<span style="color: #059669;">${value}</span>`],
-          ['Protocolo', `#${details.id}`],
-          ['Data do pedido', formatDateTime(details.requestedAt)],
-          ['Data do pagamento', formatDateTime(details.paidAt)],
-          ['Status', '<span style="color: #059669;">Pago</span>'],
-        ])}
-        <p>Acompanhe seus ganhos em
-          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
-      `,
-    );
-    await this.send(to, `Saque realizado (${value}) — Viva Mais Club`, html);
+    void name; // o template não usa saudação nominal
+    const html = this.kidsTeensShell({
+      title: 'Saque aprovado | Viva Mais Club',
+      heading: 'Seu saque foi aprovado!',
+      bodyHtml:
+        this.p('Seu pedido de saque foi analisado e aprovado com sucesso.') +
+        this.p(
+          `Valor: <strong style="color:#00a99f">${value}</strong> &nbsp;·&nbsp; Protocolo: <strong>#${details.id}</strong> &nbsp;·&nbsp; Solicitado em ${formatDateTime(details.requestedAt)}.`,
+        ) +
+        this.p(
+          'Em breve, o valor será transferido para a conta cadastrada, conforme o prazo de processamento informado pelo Viva Mais Club.',
+        ) +
+        this.p('Você pode acompanhar o status e consultar o histórico de saques sempre que desejar na sua área do parceiro.'),
+      ctaLabel: 'Acompanhar saque →',
+      ctaUrl: `${PORTAL_URL}/indicacoes`,
+    });
+    await this.send(to, `Saque aprovado (${value}) — Viva Mais Club`, html);
   }
 
   // ---- Viva Kids / Viva Teens (layout próprio, fora do wrap padrão) ----
@@ -406,5 +412,99 @@ ${opts.heroHtml ?? ''}
       ctaUrl: `${PORTAL_URL}/suporte`,
     });
     await this.send(to, `Chamado #${ticketId} encerrado — Viva Mais Club`, html);
+  }
+
+  /** Chamado aberto — confirmação de recebimento. */
+  async sendTicketOpened(to: string, ticketId: number, title?: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Abertura de chamado | Viva Mais Club',
+      badge: `CHAMADO #${ticketId}`,
+      heading: 'Recebemos sua solicitação!',
+      bodyHtml:
+        this.p(title ? `Seu chamado <strong>${title}</strong> foi registrado com sucesso e nossa equipe já foi notificada.` : 'Seu chamado foi registrado com sucesso e nossa equipe já foi notificada.') +
+        this.p(
+          'Em breve, um de nossos atendentes analisará sua solicitação e dará andamento ao atendimento. Você poderá acompanhar o status do chamado sempre que precisar pela sua área no Viva Mais Club.',
+        ) +
+        this.p(
+          'Agradecemos pela confiança. Estamos à disposição para oferecer o suporte necessário e garantir a melhor experiência possível.',
+        ),
+      ctaLabel: 'Acompanhar chamado →',
+      ctaUrl: `${PORTAL_URL}/suporte`,
+    });
+    await this.send(to, `Chamado #${ticketId} registrado — Viva Mais Club`, html);
+  }
+
+  /** Clube de Descontos liberado. */
+  async sendClubeAccessReleased(to: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Clube de descontos | Viva Mais Club',
+      heading: 'Seu acesso ao Clube de Descontos foi liberado!',
+      bodyHtml:
+        this.p('Agora você já pode aproveitar os benefícios exclusivos do Clube de Descontos Viva Mais Club.') +
+        this.p(
+          'Tenha acesso a ofertas especiais e condições diferenciadas em uma ampla rede de parceiros, com economia em produtos e serviços para facilitar o seu dia a dia.',
+        ) +
+        this.p('Basta acessar sua área do cliente para conhecer todas as vantagens disponíveis e começar a economizar.'),
+      ctaLabel: 'Acessar Clube de Descontos →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Clube de Descontos liberado — Viva Mais Club', html);
+  }
+
+  /** Telemedicina + Telemedicina Pet liberadas. */
+  async sendTelemedAccessReleased(to: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Acesso liberado | Viva Mais Club',
+      heading: 'Seu acesso foi liberado!',
+      bodyHtml:
+        this.p(
+          'Boas notícias! Seu acesso aos serviços de Telemedicina e Telemedicina Pet já está disponível no Viva Mais Club.',
+        ) +
+        this.p(
+          'A partir de agora, você pode utilizar os serviços sempre que precisar, com praticidade, segurança e atendimento de qualidade para cuidar da sua saúde e também da saúde do seu pet.',
+        ) +
+        this.p('Basta acessar sua área do cliente para iniciar um atendimento ou consultar os serviços disponíveis.'),
+      ctaLabel: 'Acessar Telemedicina →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Telemedicina liberada — Viva Mais Club', html);
+  }
+
+  /** Senha alterada — aviso de segurança. */
+  async sendPasswordChanged(to: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Senha alterada | Viva Mais Club',
+      heading: 'Sua nova senha foi criada com sucesso!',
+      bodyHtml:
+        this.p('Pronto! A senha da sua conta no Viva Mais Club foi atualizada.') +
+        this.p(
+          'A partir de agora, utilize sua nova senha para acessar a plataforma e aproveitar todos os benefícios disponíveis para você.',
+        ) +
+        this.p(
+          'Caso você não reconheça esta alteração, entre em contato com nossa equipe de suporte imediatamente para proteger sua conta.',
+        ),
+      ctaLabel: 'Acessar minha conta →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Sua senha foi alterada — Viva Mais Club', html);
+  }
+
+  /** Boas-vindas — conta criada. */
+  async sendWelcome(to: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Boas-vindas | Viva Mais Club',
+      heading: 'Seja bem-vindo(a) ao Viva Mais Club!',
+      bodyHtml:
+        this.p('É uma alegria ter você conosco!') +
+        this.p(
+          'A partir de agora, você faz parte de um clube criado para tornar o cuidado com a saúde mais simples, acessível e presente no seu dia a dia.',
+        ) +
+        this.p(
+          'Aqui, você conta com consultas por telemedicina, benefícios exclusivos e uma plataforma pensada para oferecer praticidade sempre que precisar.',
+        ),
+      ctaLabel: 'Conhecer minha área →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Bem-vindo(a) ao Viva Mais Club', html);
   }
 }

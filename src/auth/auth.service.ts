@@ -128,6 +128,12 @@ export class AuthService {
     user.passwordResetCode = null;
     user.passwordResetExpires = null;
     await this.usersRepo.save(user);
+    // Aviso de segurança: se não foi o dono, ele precisa saber. Best-effort.
+    try {
+      await this.mailService.sendPasswordChanged(user.email);
+    } catch {
+      // a senha já foi trocada; o aviso não pode reverter isso
+    }
     return { success: true, message: 'Senha redefinida com sucesso.' };
   }
 }

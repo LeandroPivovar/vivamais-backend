@@ -697,6 +697,9 @@ export class BillingService {
   private async confirmPaid(transaction: Transaction, link: ReferralLink | null, user: User) {
     // Pagamento confirmado ativa a conta + libera os 3 benefícios inclusos no plano
     // (telemedicina, clube de descontos, veterinário) — sem depender do admin.
+    // `firstActivation` separa a ativação inicial das renovações: boas-vindas e
+    // avisos de liberação de benefício só fazem sentido na primeira vez.
+    const firstActivation = user.status !== 'ativo';
     if (user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet) {
       user.status = 'ativo';
       user.accessHealth = true;
@@ -731,14 +734,39 @@ export class BillingService {
         this.logger.warn(`Falha ao avisar indicador da comissão (link ${link.id}): ${(err as Error).message}`);
       }
     }
+    // Boas-vindas: só na ativação da conta (1º pagamento), não nas renovações.
+    if (firstActivation) {
+      try {
+        await this.mailService.sendWelcome(user.email);
+      } catch (err) {
+        this.logger.warn(`Falha ao enviar boas-vindas (user ${user.id}): ${(err as Error).message}`);
+      }
+    }
     // Telemedicina (Vencca) — cadastro antigo, mantido. Marca sucesso pra não re-tentar no cron.
+    const wasTelemedRegistered = user.telemedRegistered;
     const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
     if (venccaOk) {
       user.telemedRegistered = true;
       await this.usersRepo.save(user);
+      // Avisa que telemedicina + pet estão liberadas — só na primeira liberação,
+      // senão o cliente receberia o mesmo aviso a cada renovação. Best-effort.
+      if (!wasTelemedRegistered) {
+        try {
+          await this.mailService.sendTelemedAccessReleased(user.email);
+        } catch (err) {
+          this.logger.warn(`Falha ao avisar liberação da telemedicina (user ${user.id}): ${(err as Error).message}`);
+        }
+      }
     }
     // Clube de Descontos (Clube Certo) — cadastro adicional (no-op se desligado).
     await this.clubeCertoService.registerAssociate(user);
+    if (firstActivation) {
+      try {
+        await this.mailService.sendClubeAccessReleased(user.email);
+      } catch (err) {
+        this.logger.warn(`Falha ao avisar liberação do clube (user ${user.id}): ${(err as Error).message}`);
+      }
+    }
     // E-mail de confirmação de pagamento.
     await this.mailService.sendPaymentConfirmed(
       user.email,
@@ -1311,6 +1339,12 @@ export class BillingService {
           if (registered) {
             await this.usersService.markTelemedRegistered(user.id);
             ok += 1;
+            // Cadastro só vingou agora — avisa o cliente que o acesso liberou.
+            try {
+              await this.mailService.sendTelemedAccessReleased(user.email);
+            } catch {
+              // aviso é best-effort; o cadastro na Vencca é o que importa aqui
+            }
           } else {
             await this.usersService.incrementTelemedAttempts(user.id);
           }

@@ -66,6 +66,12 @@ export class TicketsService {
       user: withUser?.user?.name ?? null,
       status: ticket.status,
     });
+    // Confirma ao cliente que o chamado entrou na fila. Best-effort.
+    if (withUser?.user?.email) {
+      void this.mail
+        .sendTicketOpened(withUser.user.email, ticket.id, ticket.title)
+        .catch(() => undefined);
+    }
     return this.summary(ticket);
   }
 

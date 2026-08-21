@@ -9,6 +9,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { basePriceForPlan, mmnForPlan } from '../common/pricing';
+import { MailService } from '../mail/mail.service';
 
 const MODULE_PRICE_KEYS: Array<keyof AppConfig['modules']> = ['health', 'clube', 'pet', 'funeral'];
 const LEVEL_LABELS = ['1º Nível', '2º Nível', '3º Nível', '4º Nível', '5º Nível'];
@@ -43,6 +44,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private usersRepo: Repository<User>,
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
+    private mailService: MailService,
   ) {}
 
   private async getConfig(): Promise<AppConfig> {
@@ -164,6 +166,12 @@ export class UsersService {
     if (!ok) throw new ConflictException('Senha atual incorreta.');
     user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
     await this.usersRepo.save(user);
+    // Aviso de segurança: se não foi o dono, ele precisa saber. Best-effort.
+    try {
+      await this.mailService.sendPasswordChanged(user.email);
+    } catch {
+      // a senha já foi trocada; o aviso não pode reverter isso
+    }
   }
 
   async listAll(): Promise<User[]> {
