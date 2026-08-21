@@ -40,6 +40,10 @@ export class Transaction {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0, transformer: DecimalTransformer })
   referralBonus: number;
 
+  /** Quando o lembrete de pagamento pendente foi enviado — nulo = ainda não enviamos. */
+  @Column({ type: 'datetime', nullable: true })
+  pendingReminderAt: Date | null;
+
   // --- Rastreio no gateway ---
   // Qual gateway processou este lançamento: 'veenca' | 'woovi'.
   @Column({ type: 'varchar', length: 20, default: 'veenca' })

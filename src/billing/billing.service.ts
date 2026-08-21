@@ -714,6 +714,22 @@ export class BillingService {
         user.referralBonusPaid = true;
         await this.usersRepo.save(user);
       }
+      // Avisa o INDICADOR (dono do link) que a indicação dele virou comissão.
+      // Valor = os mesmos 10% creditados em registerConversion, mais o bônus da
+      // indicação nova. Best-effort: o pagamento do indicado não pode falhar aqui.
+      try {
+        const referrer = await this.usersRepo.findOne({ where: { id: link.userId } });
+        if (referrer?.email) {
+          const credited = Number(transaction.value) * 0.1 + bonus;
+          await this.mailService.sendCommissionProcessed(
+            referrer.email,
+            user.name,
+            formatCurrency(Math.round(credited * 100) / 100),
+          );
+        }
+      } catch (err) {
+        this.logger.warn(`Falha ao avisar indicador da comissão (link ${link.id}): ${(err as Error).message}`);
+      }
     }
     // Telemedicina (Vencca) — cadastro antigo, mantido. Marca sucesso pra não re-tentar no cron.
     const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
@@ -965,9 +981,19 @@ export class BillingService {
         });
         this.logger.warn(`Woovi: autorização/cobrança rejeitada (user ${origin.userId}, event ${event}).`);
       }
+    } else if (event === 'PIX_AUTOMATIC_APPROVED') {
+      // A autorização do débito automático foi aprovada no banco. Não ativa a conta
+      // sozinha (esperamos o dinheiro entrar via COBR_COMPLETED), mas é o momento em
+      // que a renovação automática passa a valer — avisa o cliente. Best-effort.
+      try {
+        const user = await this.usersService.findById(origin.userId);
+        await this.mailService.sendAutoRenewalActive(user.email);
+        this.logger.log(`Woovi: renovação automática aprovada (user ${origin.userId}).`);
+      } catch (err) {
+        this.logger.warn(`Falha ao avisar renovação automática: ${(err as Error).message}`);
+      }
     }
-    // PIX_AUTOMATIC_APPROVED (autorização aprovada) não ativa sozinho — esperamos o
-    // dinheiro entrar via COBR_COMPLETED. Demais eventos são ignorados.
+    // Demais eventos são ignorados.
   }
 
   /**
@@ -1214,6 +1240,39 @@ export class BillingService {
     } finally {
       this.reconcilingPagarme = false;
     }
+  }
+
+  /**
+   * Lembrete único de pagamento pendente: um lançamento que continua 'pendente'
+   * 24h depois de criado rende um e-mail, e só um (pendingReminderAt trava o
+   * reenvio). Roda 1x por dia às 10h de São Paulo para não acordar ninguém.
+   */
+  @Cron('0 10 * * *', { timeZone: 'America/Sao_Paulo' })
+  async remindPendingPayments() {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 1);
+
+    const pending = await this.txRepo.find({
+      where: { status: 'pendente', pendingReminderAt: IsNull(), createdAt: LessThan(cutoff) },
+      order: { createdAt: 'ASC' },
+      take: 100,
+    });
+    if (!pending.length) return;
+
+    for (const tx of pending) {
+      // Marca antes de enviar: se o e-mail falhar, não insistimos amanhã.
+      tx.pendingReminderAt = new Date();
+      await this.txRepo.save(tx);
+      try {
+        const user = await this.usersService.findById(tx.userId);
+        // Conta que já virou ativa por outro caminho não precisa de cobrança.
+        if (user.status === 'ativo') continue;
+        await this.mailService.sendPaymentPending(user.email, tx.plan, formatCurrency(Number(tx.value)));
+      } catch (err) {
+        this.logger.warn(`Lembrete de pendência falhou (tx ${tx.id}): ${(err as Error).message}`);
+      }
+    }
+    this.logger.log(`Lembretes de pagamento pendente processados: ${pending.length}.`);
   }
 
   /**

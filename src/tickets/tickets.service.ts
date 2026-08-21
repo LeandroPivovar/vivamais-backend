@@ -6,6 +6,7 @@ import { TicketMessage } from './entities/ticket-message.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { AddMessageDto } from './dto/add-message.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
 
 const STATUS_LABELS: Record<string, string> = {
   enviado: 'Enviado',
@@ -19,6 +20,7 @@ export class TicketsService {
     @InjectRepository(Ticket) private ticketsRepo: Repository<Ticket>,
     @InjectRepository(TicketMessage) private messagesRepo: Repository<TicketMessage>,
     private notifications: NotificationsService,
+    private mail: MailService,
   ) {}
 
   private summary(t: Ticket, extra?: { userName?: string; lastMessageAt?: Date }) {
@@ -111,7 +113,14 @@ export class TicketsService {
   async addAdminMessage(id: number, dto: AddMessageDto) {
     const ticket = await this.ticketsRepo.findOne({ where: { id }, relations: ['user'] });
     if (!ticket) throw new NotFoundException('Ticket não encontrado.');
-    return this.addMessage(ticket, 'admin', dto, 'respondido');
+    const res = await this.addMessage(ticket, 'admin', dto, 'respondido');
+    // Avisa o cliente que o suporte respondeu. Best-effort.
+    if (ticket.user?.email) {
+      void this.mail
+        .sendTicketAnswered(ticket.user.email, ticket.id, ticket.title)
+        .catch(() => undefined);
+    }
+    return res;
   }
 
   async setStatus(id: number, status: 'enviado' | 'respondido' | 'fechado') {
@@ -126,6 +135,12 @@ export class TicketsService {
       status,
       action: `Status alterado para ${STATUS_LABELS[status] ?? status}`,
     });
+    // Encerramento avisa o cliente por e-mail. Best-effort.
+    if (status === 'fechado' && ticket.user?.email) {
+      void this.mail
+        .sendTicketClosed(ticket.user.email, ticket.id, ticket.title)
+        .catch(() => undefined);
+    }
     return this.detail(ticket);
   }
 

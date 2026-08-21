@@ -136,16 +136,10 @@ export class MailService {
 
   /** Confirmação de pagamento aprovado. */
   async sendPaymentConfirmed(to: string, name: string, plan: string, value: string): Promise<void> {
-    const html = this.wrap(
-      'Pagamento confirmado!',
-      `
-        <p>Olá, ${name}.</p>
-        <p>Recebemos o pagamento da sua assinatura <strong>${plan}</strong> no valor de <strong>${value}</strong>.</p>
-        <p>Seu plano está <strong>ativo</strong> — acesse seus benefícios em
-          <a href="https://conta.vivamaisclub.net">conta.vivamaisclub.net</a>.</p>
-      `,
-    );
-    await this.send(to, 'Pagamento confirmado — Viva Mais Club', html);
+    // Layout novo (template 13). `name` fica na assinatura porque há 9 pontos de
+    // chamada; o template não usa saudação nominal.
+    void name;
+    await this.sendPaymentConfirmedTemplate(to, plan, value);
   }
 
   /** Bloco de detalhes (rótulo → valor) usado nos e-mails de saque. */
@@ -232,19 +226,30 @@ export class MailService {
    */
   private kidsTeensShell(opts: {
     title: string;
-    eyebrow: string;
+    /** Rótulo pequeno em maiúsculas acima do título (Kids/Teens). */
+    eyebrow?: string;
+    /** Pílula azul acima do título — usada nos e-mails de chamado. */
+    badge?: string;
     heading: string;
     bodyHtml: string;
     ctaLabel: string;
     ctaUrl: string;
     heroHtml?: string;
   }): string {
+    const eyebrowHtml = opts.eyebrow
+      ? `<p style="margin:0 0 10px;color:#00a99f;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase">${opts.eyebrow}</p>`
+      : '';
+    const badgeHtml = opts.badge
+      ? `<div style="display:inline-block;background:#e8f0ff;border-radius:999px;color:#002e73;font-size:11px;font-weight:700;letter-spacing:.7px;padding:8px 12px">${opts.badge}</div>`
+      : '';
+    // Com pílula o título ganha respiro em cima; sem ela, cola no topo do bloco.
+    const headingMargin = opts.badge ? '20px 0 16px' : '0 0 16px';
     return `<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${opts.title}</title>
 <style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');@media only screen and (max-width:620px){.email{width:100%!important;max-width:100%!important}.pad{padding-left:24px!important;padding-right:24px!important}.title{font-size:28px!important;line-height:34px!important}.cta{display:block!important;text-align:center!important}.email img{max-width:100%!important;height:auto!important}}</style></head>
 <body style="margin:0;padding:0;background:#f3f6f7;font-family:'Plus Jakarta Sans',Arial,sans-serif"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:32px 12px"><table class="email" role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px;max-width:600px;background:#fff;border-radius:20px;overflow:hidden">
 <tr><td style="height:10px;background:#00b3a9"></td></tr><tr><td class="pad" style="padding:30px 48px;background:#002e73"><img src="${PORTAL_URL}/emails/logo-header.png" alt="Viva Mais Club" width="143" style="display:block;width:143px;max-width:100%;height:auto;border:0"></td></tr>
-<tr><td class="pad" style="padding:38px 48px ${opts.heroHtml ? '28px' : '42px'}"><p style="margin:0 0 10px;color:#00a99f;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase">${opts.eyebrow}</p><h1 class="title" style="margin:0 0 16px;font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:32px;line-height:39px;letter-spacing:-1.3px;color:#002e73">${opts.heading}</h1>${opts.bodyHtml}<a class="cta" href="${opts.ctaUrl}" style="display:inline-block;margin-top:${opts.heroHtml ? '2px' : '8px'};background:#00b3a9;border-radius:9px;color:#fff;padding:15px 23px;text-decoration:none;font-size:14px;font-weight:700">${opts.ctaLabel}</a></td></tr>
+<tr><td class="pad" style="padding:38px 48px ${opts.heroHtml ? '28px' : '42px'}">${eyebrowHtml}${badgeHtml}<h1 class="title" style="margin:${headingMargin};font-family:'Plus Jakarta Sans',Arial,sans-serif;font-size:32px;line-height:39px;letter-spacing:-1.3px;color:#002e73">${opts.heading}</h1>${opts.bodyHtml}<a class="cta" href="${opts.ctaUrl}" style="display:inline-block;margin-top:${opts.heroHtml ? '2px' : '8px'};background:#00b3a9;border-radius:9px;color:#fff;padding:15px 23px;text-decoration:none;font-size:14px;font-weight:700">${opts.ctaLabel}</a></td></tr>
 ${opts.heroHtml ?? ''}
 <tr><td class="pad" align="center" style="padding:28px 48px 26px;background:#fff;border-top:1px solid #e5eaed"><img src="${PORTAL_URL}/emails/logo-footer.png" alt="Viva Mais Club" width="115" style="display:block;width:115px;max-width:100%;height:auto;border:0;margin:0 auto 14px"><p style="margin:0;font-size:11px;line-height:18px;color:#67747e">Você recebeu este e-mail por ter uma conta no Viva Mais Club.</p><p style="margin:8px 0 0;font-size:11px;color:#002e73">© Viva Mais Club</p></td></tr><tr><td style="height:9px;background:#00b3a9"></td></tr>
 </table></td></tr></table></body></html>`;
@@ -275,5 +280,131 @@ ${opts.heroHtml ?? ''}
       ctaUrl: `${PORTAL_URL}/teen`,
     });
     await this.send(to, 'Viva Teens ativado — Viva Mais Club', html);
+  }
+
+  // ---- Comissão / pagamento / chamados (mesmo layout dos templates) ----
+
+  /** Parágrafo no estilo do corpo dos templates. */
+  private p(html: string): string {
+    return `<p style="margin:0 0 16px;font-size:15px;line-height:24px;color:#24313d">${html}</p>`;
+  }
+
+  /** Comissão processada — enviado ao indicador quando um indicado dele paga. */
+  async sendCommissionProcessed(
+    to: string,
+    referredName?: string,
+    value?: string,
+  ): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Comissão processada | Viva Mais Club',
+      heading: 'Sua comissão foi processada com sucesso!',
+      bodyHtml:
+        this.p(
+          referredName
+            ? `Temos uma ótima notícia: <strong>${referredName}</strong> ativou a assinatura pela sua indicação e sua comissão foi processada.`
+            : 'Temos uma ótima notícia: sua comissão foi processada e está disponível conforme as condições do programa.',
+        ) +
+        (value ? this.p(`Valor creditado: <strong style="color:#00a99f">${value}</strong>.`) : '') +
+        this.p(
+          'Agradecemos pela sua parceria e confiança no Viva Mais Club. Seu empenho faz parte do nosso compromisso de levar mais saúde, praticidade e qualidade de vida para cada vez mais pessoas.',
+        ) +
+        this.p('Você pode acompanhar os detalhes da comissão e o histórico de pagamentos na sua área do parceiro.'),
+      ctaLabel: 'Ver minhas comissões →',
+      ctaUrl: `${PORTAL_URL}/indicacoes`,
+    });
+    await this.send(to, 'Sua comissão foi processada — Viva Mais Club', html);
+  }
+
+  /** Pagamento confirmado (layout novo dos templates). */
+  async sendPaymentConfirmedTemplate(to: string, plan: string, value: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Pagamento confirmado | Viva Mais Club',
+      heading: 'Seu pagamento foi confirmado!',
+      bodyHtml:
+        this.p('Recebemos seu pagamento com sucesso e está tudo certo!') +
+        this.p(`Plano <strong>${plan}</strong> — <strong style="color:#00a99f">${value}</strong>.`) +
+        this.p(
+          'Agora você já pode aproveitar todos os benefícios do Viva Mais Club com mais praticidade, economia e cuidado para a sua saúde.',
+        ) +
+        this.p('A partir de agora, você terá acesso aos serviços e vantagens exclusivos da plataforma, sempre que precisar.'),
+      ctaLabel: 'Acessar minha área →',
+      ctaUrl: PORTAL_URL,
+    });
+    await this.send(to, 'Pagamento confirmado — Viva Mais Club', html);
+  }
+
+  /** Lembrete de pagamento pendente. */
+  async sendPaymentPending(to: string, plan?: string, value?: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Pagamento pendente | Viva Mais Club',
+      heading: 'Seu pagamento ainda está pendente',
+      bodyHtml:
+        this.p('Identificamos que o pagamento da sua assinatura ainda não foi concluído.') +
+        (plan && value ? this.p(`Plano <strong>${plan}</strong> — <strong>${value}</strong>.`) : '') +
+        this.p(
+          'Para continuar aproveitando todos os benefícios do Viva Mais Club, basta finalizar o pagamento. É rápido, seguro e garante que seu acesso permaneça ativo.',
+        ) +
+        this.p(
+          'Caso o pagamento já tenha sido realizado, desconsidere esta mensagem. A confirmação pode levar alguns instantes para ser processada.',
+        ),
+      ctaLabel: 'Finalizar pagamento →',
+      ctaUrl: `${PORTAL_URL}/financeiro`,
+    });
+    await this.send(to, 'Seu pagamento ainda está pendente — Viva Mais Club', html);
+  }
+
+  /** Renovação automática (PIX Automático) ativada. */
+  async sendAutoRenewalActive(to: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Renovação automática | Viva Mais Club',
+      heading: 'Sua renovação automática está ativa!',
+      bodyHtml:
+        this.p('Tudo certo! A renovação automática da sua assinatura foi ativada com sucesso.') +
+        this.p(
+          'Com isso, você continua aproveitando todos os benefícios do Viva Mais Club sem interrupções, garantindo acesso contínuo aos serviços de telemedicina, vantagens exclusivas e muito mais.',
+        ) +
+        this.p('Você pode gerenciar ou alterar essa configuração sempre que desejar na sua área do cliente.'),
+      ctaLabel: 'Gerenciar assinatura →',
+      ctaUrl: `${PORTAL_URL}/financeiro`,
+    });
+    await this.send(to, 'Renovação automática ativada — Viva Mais Club', html);
+  }
+
+  /** Chamado respondido pelo suporte. */
+  async sendTicketAnswered(to: string, ticketId: number, title?: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Chamado respondido | Viva Mais Club',
+      badge: `CHAMADO #${ticketId}`,
+      heading: 'Seu chamado recebeu uma resposta!',
+      bodyHtml:
+        this.p(title ? `Temos uma atualização sobre a sua solicitação: <strong>${title}</strong>.` : 'Temos uma atualização sobre a sua solicitação.') +
+        this.p(
+          'Nossa equipe respondeu ao seu chamado e já disponibilizou as informações necessárias para dar continuidade ao atendimento.',
+        ) +
+        this.p(
+          'Acesse sua área no Viva Mais Club para visualizar a resposta completa e, se necessário, enviar novas informações ou continuar a conversa com nossa equipe.',
+        ),
+      ctaLabel: 'Ver resposta do chamado →',
+      ctaUrl: `${PORTAL_URL}/suporte`,
+    });
+    await this.send(to, `Chamado #${ticketId} respondido — Viva Mais Club`, html);
+  }
+
+  /** Chamado encerrado. */
+  async sendTicketClosed(to: string, ticketId: number, title?: string): Promise<void> {
+    const html = this.kidsTeensShell({
+      title: 'Chamado encerrado | Viva Mais Club',
+      badge: `CHAMADO #${ticketId}`,
+      heading: 'Seu chamado foi encerrado',
+      bodyHtml:
+        this.p(title ? `Informamos que o seu chamado <strong>${title}</strong> foi concluído e encerrado com sucesso.` : 'Informamos que o seu chamado foi concluído e encerrado com sucesso.') +
+        this.p(
+          'Esperamos que a solicitação tenha sido resolvida de forma satisfatória. Caso ainda precise de ajuda ou tenha uma nova dúvida, nossa equipe estará à disposição para atendê-lo.',
+        ) +
+        this.p('Agradecemos pela confiança em nossos serviços e por fazer parte do Viva Mais Club.'),
+      ctaLabel: 'Abrir novo chamado →',
+      ctaUrl: `${PORTAL_URL}/suporte`,
+    });
+    await this.send(to, `Chamado #${ticketId} encerrado — Viva Mais Club`, html);
   }
 }
