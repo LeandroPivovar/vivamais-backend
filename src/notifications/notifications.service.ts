@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Not, Repository } from 'typeorm';
 import { Transaction } from '../billing/entities/transaction.entity';
 import { Ticket } from '../tickets/entities/ticket.entity';
+import { brDayWindow, formatBrDate } from '../common/br-date';
 
 type SalePayload = {
   client?: string | null;
@@ -32,21 +33,6 @@ type ErrorPayload = {
 function money(value: number | string | null | undefined): string {
   const n = Number(value ?? 0);
   return `R$ ${n.toFixed(2).replace('.', ',')}`;
-}
-
-function spDayWindow(date = new Date()): { start: Date; end: Date } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const getPart = (type: string) => Number(parts.find((part) => part.type === type)?.value);
-  const start = new Date(Date.UTC(getPart('year'), getPart('month') - 1, getPart('day'), 3, 0, 0, 0));
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
-  return { start, end };
 }
 
 @Injectable()
@@ -252,7 +238,7 @@ export class NotificationsService {
 
   @Cron('55 23 * * *', { timeZone: 'America/Sao_Paulo' })
   async sendDailyReport() {
-    const { start, end } = spDayWindow();
+    const { start, endInclusive: end } = brDayWindow();
     const [transactions, ticketsOpened, ticketsUpdated] = await Promise.all([
       this.txRepo.find({
         where: { status: Not('duplicado'), createdAt: Between(start, end) },
@@ -271,7 +257,7 @@ export class NotificationsService {
       [
         '*RELATORIO DIARIO - VIVA MAIS*',
         '',
-        `Periodo: ${start.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+        `Periodo: ${formatBrDate(start)}`,
         `Vendas pagas: ${paid.length}`,
         `Faturamento: ${money(gross)}`,
         `Pix: ${pix.length} venda(s) / ${money(pix.reduce((sum, tx) => sum + Number(tx.value), 0))}`,

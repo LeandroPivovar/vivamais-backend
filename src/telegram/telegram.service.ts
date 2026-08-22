@@ -13,6 +13,7 @@ import { Injectable, Logger } from '@nestjs/common';
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
+  private readonly dedupe = new Map<string, number>();
 
   private get token(): string {
     return process.env.TELEGRAM_BOT_TOKEN ?? '';
@@ -30,6 +31,16 @@ export class TelegramService {
 
   private escape(v: string): string {
     return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  private once(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
+    const now = Date.now();
+    for (const [k, expires] of this.dedupe) {
+      if (expires <= now) this.dedupe.delete(k);
+    }
+    if (this.dedupe.has(key)) return false;
+    this.dedupe.set(key, now + ttlMs);
+    return true;
   }
 
   private async send(chatId: string, text: string): Promise<void> {
@@ -67,7 +78,9 @@ export class TelegramService {
     method?: string;
     gateway?: string;
     platform?: string;
+    transactionId?: number | string | null;
   }): Promise<void> {
+    if (d.transactionId && !this.once(`sale:${d.transactionId}`)) return;
     const value = `R$ ${Number(d.value).toFixed(2).replace('.', ',')}`;
     const text =
       `✅ <b>Venda confirmada</b>\n` +

@@ -22,6 +22,7 @@ import { PayDto } from './dto/pay.dto';
 import { basePriceForPlan } from '../common/pricing';
 import { onlyDigits, formatBrazilPhone } from '../common/phone';
 import { publicUrl } from '../common/public-url';
+import { formatBrDate } from '../common/br-date';
 
 // Teto de tentativas de cadastro na telemedicina antes de o cron desistir do registro.
 const MAX_TELEMED_ATTEMPTS = 5;
@@ -42,7 +43,7 @@ function generatePassword(length = 8): string {
 }
 
 function formatDate(date: Date): string {
-  return date.toLocaleDateString('pt-BR');
+  return formatBrDate(date);
 }
 
 function formatCurrency(value: number): string {
@@ -52,6 +53,7 @@ function formatCurrency(value: number): string {
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
+  private readonly webhookDedupe = new Map<string, number>();
   private reconciling = false;
   private reconcilingPagarme = false;
   private retryingTelemed = false;
@@ -71,6 +73,16 @@ export class BillingService {
     private telegramService: TelegramService,
     private notificationsService: NotificationsService,
   ) {}
+
+  private onceWebhook(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
+    const now = Date.now();
+    for (const [k, expires] of this.webhookDedupe) {
+      if (expires <= now) this.webhookDedupe.delete(k);
+    }
+    if (this.webhookDedupe.has(key)) return false;
+    this.webhookDedupe.set(key, now + ttlMs);
+    return true;
+  }
 
   /**
    * Histórico de mensalidades: UMA fatura por mês (não uma por QR/tentativa gerada).
@@ -776,6 +788,7 @@ export class BillingService {
     );
     // Notifica a venda confirmada (Telegram + WhatsApp/Z-API; no-op se não configurados).
     const saleInfo = {
+      transactionId: transaction.id,
       client: user.name,
       plan: transaction.plan,
       value: Number(transaction.value),
@@ -931,6 +944,9 @@ export class BillingService {
     const isRenewalSub = (origin.gatewayIdentifier || '').includes('-renew-');
 
     if (event === 'PIX_AUTOMATIC_COBR_COMPLETED') {
+      const eventKey = chargeId ? `${event}:${chargeId}` : `${event}:${origin.id}`;
+      if (!this.onceWebhook(eventKey)) return;
+
       // Idempotência: se já registramos essa cobrança, sai.
       if (chargeId) {
         const dup = await this.txRepo.findOne({ where: { gatewayTransactionId: String(chargeId) } });
@@ -944,9 +960,12 @@ export class BillingService {
 
       if (origin.status === 'pendente') {
         // 1ª cobrança da assinatura quita o lançamento de origem.
+        const patch: Partial<Transaction> = { status: 'pago' };
+        if (chargeId) patch.gatewayTransactionId = String(chargeId);
+        const updated = await this.txRepo.update({ id: origin.id, status: 'pendente' }, patch);
+        if (!updated.affected) return;
         origin.status = 'pago';
         if (chargeId) origin.gatewayTransactionId = String(chargeId);
-        await this.txRepo.save(origin);
         const user = await this.usersService.findById(origin.userId);
         if (isRenewalSub) {
           await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(origin.value)));
@@ -1010,6 +1029,9 @@ export class BillingService {
         this.logger.warn(`Woovi: autorização/cobrança rejeitada (user ${origin.userId}, event ${event}).`);
       }
     } else if (event === 'PIX_AUTOMATIC_APPROVED') {
+      const approvedKey = subGlobalID ? `${event}:${subGlobalID}` : `${event}:${origin.id}`;
+      if (!this.onceWebhook(approvedKey)) return;
+
       // A autorização do débito automático foi aprovada no banco. Não ativa a conta
       // sozinha (esperamos o dinheiro entrar via COBR_COMPLETED), mas é o momento em
       // que a renovação automática passa a valer — avisa o cliente. Best-effort.

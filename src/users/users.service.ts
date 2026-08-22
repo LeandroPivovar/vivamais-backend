@@ -11,34 +11,10 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { basePriceForPlan, mmnForPlan } from '../common/pricing';
 import { MailService } from '../mail/mail.service';
 import { ageGroup } from '../common/age';
+import { brDayWindow, formatBrDate } from '../common/br-date';
 
 const MODULE_PRICE_KEYS: Array<keyof AppConfig['modules']> = ['health', 'clube', 'pet', 'funeral'];
 const LEVEL_LABELS = ['1º Nível', '2º Nível', '3º Nível', '4º Nível', '5º Nível'];
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('pt-BR');
-}
-
-function saoPauloTodayWindow(date = new Date()): { start: Date; endInclusive: Date } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-
-  const getPart = (type: string) => Number(parts.find((part) => part.type === type)?.value);
-  const year = getPart('year');
-  const month = getPart('month');
-  const day = getPart('day');
-
-  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0));
-  const endInclusive = new Date(start);
-  endInclusive.setUTCDate(endInclusive.getUTCDate() + 1);
-  endInclusive.setUTCMilliseconds(endInclusive.getUTCMilliseconds() - 1);
-
-  return { start, endInclusive };
-}
 
 @Injectable()
 export class UsersService {
@@ -66,7 +42,7 @@ export class UsersService {
       role: user.role,
       isDependent: user.holderId != null,
       ageGroup: ageGroup(user.birthDate),
-      memberSince: formatDate(user.createdAt),
+      memberSince: formatBrDate(user.createdAt),
       address: user.address,
       neighborhood: user.neighborhood,
       complement: user.complement,
@@ -92,7 +68,7 @@ export class UsersService {
         funeral: user.accessFuneral,
       },
       status: user.status,
-      date: formatDate(user.createdAt),
+      date: formatBrDate(user.createdAt),
       phone: user.phone,
       birthDate: user.birthDate,
       gender: user.gender,
@@ -140,7 +116,7 @@ export class UsersService {
     todayPending: number;
     todayCanceled: number;
   }> {
-    const { start, endInclusive } = saoPauloTodayWindow();
+    const { start, endInclusive } = brDayWindow();
     const base = { holderId: IsNull() }; // só titulares (dependentes não são assinaturas)
     const todayBase = { ...base, createdAt: Between(start, endInclusive) };
     const [active, pending, canceled, today, todayActive, todayPending, todayCanceled] = await Promise.all([
@@ -320,7 +296,7 @@ export class UsersService {
           plan: child.plan,
           level: LEVEL_LABELS[level - 1] ?? child.level,
           status: child.status,
-          date: formatDate(child.createdAt),
+          date: formatBrDate(child.createdAt),
           gain: gain > 0 ? `R$ ${gain.toFixed(2).replace('.', ',')}` : '-',
           // Nível 1 direto (indicação sua) que rendeu o bônus de R$30 do primeiro mês.
           bonus: level === 1 && child.referralBonusPaid ? 'R$ 30,00' : null,

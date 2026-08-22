@@ -11,10 +11,7 @@ import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { MailService } from '../mail/mail.service';
 import { mmnForPlan, basePriceForPlan } from '../common/pricing';
 import { ageGroup } from '../common/age';
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('pt-BR');
-}
+import { brDateKey, formatBrDate } from '../common/br-date';
 
 /** Senha temporária legível (sem caracteres ambíguos como O/0, l/1). */
 function generatePassword(length = 8): string {
@@ -184,7 +181,10 @@ export class AdminService {
       plan: tx.plan,
       value: Number(tx.value),
       status: tx.status,
-      date: formatDate(tx.createdAt),
+      date: formatBrDate(tx.createdAt),
+      dateKey: brDateKey(tx.createdAt),
+      paymentDate: formatBrDate(tx.createdAt),
+      paymentDateKey: brDateKey(tx.createdAt),
       dateIso: tx.createdAt.toISOString(),
       paymentMethod: tx.paymentMethod,
       gatewayProvider: tx.gatewayProvider,
