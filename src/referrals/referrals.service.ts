@@ -6,6 +6,7 @@ import { AppConfig } from '../admin/entities/config.entity';
 import { UsersService } from '../users/users.service';
 import { CreateLinkDto } from './dto/create-link.dto';
 import { UpdateLinkDto } from './dto/update-link.dto';
+import { mmnForPlan } from '../common/pricing';
 import { publicBaseOrigin, publicCompatOrigins, publicUrl, withPublicOrigin } from '../common/public-url';
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -182,7 +183,7 @@ export class ReferralsService {
     await this.linksRepo.increment({ id: link.id }, 'cliques', 1);
   }
 
-  /** Bônus do primeiro mês de uma indicação nova, além da comissão de 10% de sempre. */
+  /** Bônus do primeiro mês de uma indicação nova. */
   static readonly NEW_REFERRAL_BONUS = 30;
 
   /**
@@ -190,13 +191,16 @@ export class ReferralsService {
    * renovação — ver confirmPaid/recordRecurringCharge no billing). Por isso o bônus
    * de R$30 aqui é sempre "indicação nova", nunca retroativo a conversões antigas.
    */
-  async registerConversion(linkId: number, amount: number): Promise<{ bonus: number }> {
+  async registerConversion(linkId: number): Promise<{ bonus: number; commission: number }> {
     const link = await this.linksRepo.findOne({ where: { id: linkId } });
-    if (!link) return { bonus: 0 };
+    if (!link) return { bonus: 0, commission: 0 };
+    const config = await this.getConfig();
+    const firstLevelPercentage = Number(config.percentages?.[0] ?? 0);
+    const commission = (mmnForPlan(link.planType, config) * firstLevelPercentage) / 100;
     link.conversoes += 1;
-    link.comissao = Number(link.comissao) + amount * 0.1;
+    link.comissao = Number(link.comissao) + commission;
     link.bonusTotal = Number(link.bonusTotal) + ReferralsService.NEW_REFERRAL_BONUS;
     await this.linksRepo.save(link);
-    return { bonus: ReferralsService.NEW_REFERRAL_BONUS };
+    return { bonus: ReferralsService.NEW_REFERRAL_BONUS, commission };
   }
 }

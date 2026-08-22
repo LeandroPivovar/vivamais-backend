@@ -720,7 +720,7 @@ export class BillingService {
       await this.usersRepo.save(user);
     }
     if (link) {
-      const { bonus } = await this.referralsService.registerConversion(link.id, Number(transaction.value));
+      const { bonus, commission } = await this.referralsService.registerConversion(link.id);
       if (bonus > 0) {
         transaction.referralBonus = bonus;
         await this.txRepo.save(transaction);
@@ -730,12 +730,12 @@ export class BillingService {
         await this.usersRepo.save(user);
       }
       // Avisa o INDICADOR (dono do link) que a indicação dele virou comissão.
-      // Valor = os mesmos 10% creditados em registerConversion, mais o bônus da
-      // indicação nova. Best-effort: o pagamento do indicado não pode falhar aqui.
+      // Valor = a comissão configurada no Admin + bônus da indicação nova.
+      // Best-effort: o pagamento do indicado não pode falhar aqui.
       try {
         const referrer = await this.usersRepo.findOne({ where: { id: link.userId } });
         if (referrer?.email) {
-          const credited = Number(transaction.value) * 0.1 + bonus;
+          const credited = commission + bonus;
           await this.mailService.sendCommissionProcessed(
             referrer.email,
             user.name,
