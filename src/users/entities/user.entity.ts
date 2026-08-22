@@ -131,6 +131,19 @@ export class User {
   @Column({ type: 'boolean', default: false })
   referralBonusPaid: boolean;
 
+  /** Cadastro com pagamento diferido: acesso liberado até esta data, depois cobra/bloqueia. */
+  @Column({ type: 'datetime', nullable: true })
+  trialEndsAt: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  trialReminder7At: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  trialReminder3At: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  trialReminder1At: Date | null;
+
   @OneToMany(() => ReferralLink, (link) => link.user)
   links: ReferralLink[];
 

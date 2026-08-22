@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { BillingService } from './billing.service';
 import { CheckoutDto } from './dto/checkout.dto';
+import { TrialSignupDto } from './dto/trial-signup.dto';
 import { PayDto } from './dto/pay.dto';
 
 @Controller('billing')
@@ -24,6 +25,16 @@ export class BillingController {
   @Post('checkout')
   checkout(@Body() dto: CheckoutDto, @Ip() ip: string) {
     return this.billingService.checkout(dto, ip);
+  }
+
+  @Get('trial-link/:token')
+  trialLink(@Param('token') token: string) {
+    return this.billingService.getTrialSignupLink(token);
+  }
+
+  @Post('trial-signup')
+  trialSignup(@Body() dto: TrialSignupDto) {
+    return this.billingService.trialSignup(dto);
   }
 
   /** Público: registra clique no link de indicação quando o checkout público abre. */

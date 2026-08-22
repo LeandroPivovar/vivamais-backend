@@ -1,8 +1,9 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, IsNull, Repository } from 'typeorm';
+import { Between, IsNull, MoreThan, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
+import { Transaction } from '../billing/entities/transaction.entity';
 import { AppConfig, ModuleConfig } from '../admin/entities/config.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -21,6 +22,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private usersRepo: Repository<User>,
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
+    @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
     private mailService: MailService,
   ) {}
 
@@ -43,6 +45,7 @@ export class UsersService {
       isDependent: user.holderId != null,
       ageGroup: ageGroup(user.birthDate),
       memberSince: formatBrDate(user.createdAt),
+      trialEndsAt: user.trialEndsAt ? formatBrDate(user.trialEndsAt) : null,
       address: user.address,
       neighborhood: user.neighborhood,
       complement: user.complement,
@@ -69,6 +72,7 @@ export class UsersService {
       },
       status: user.status,
       date: formatBrDate(user.createdAt),
+      trialEndsAt: user.trialEndsAt ? formatBrDate(user.trialEndsAt) : null,
       phone: user.phone,
       birthDate: user.birthDate,
       gender: user.gender,
@@ -84,7 +88,20 @@ export class UsersService {
   async findById(id: number): Promise<User> {
     const user = await this.usersRepo.findOne({ where: { id }, relations: ['referredBy'] });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    return user;
+    return this.enforceTrialDue(user);
+  }
+
+  private async enforceTrialDue(user: User): Promise<User> {
+    if (!user.trialEndsAt || user.status !== 'ativo' || user.trialEndsAt.getTime() > Date.now()) return user;
+    const paidAfterTrial = await this.txRepo.count({
+      where: { userId: user.id, status: 'pago', createdAt: MoreThan(user.trialEndsAt) },
+    });
+    if (paidAfterTrial > 0) return user;
+    user.status = 'pendente';
+    user.accessHealth = false;
+    user.accessClube = false;
+    user.accessPet = false;
+    return this.usersRepo.save(user);
   }
 
   async updateProfile(id: number, dto: UpdateProfileDto): Promise<User> {

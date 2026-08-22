@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { Transaction } from '../billing/entities/transaction.entity';
+import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
 import { Activity } from '../activities/entities/activity.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { Ticket } from '../tickets/entities/ticket.entity';
@@ -21,7 +22,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME ?? 'root',
   password: process.env.DB_PASSWORD ?? '',
   database: process.env.DB_DATABASE ?? 'acesso_saude',
-  entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Heir],
+  entities: [User, ReferralLink, Transaction, TrialSignupLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Heir],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   synchronize: false,
 });

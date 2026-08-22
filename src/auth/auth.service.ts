@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../users/entities/user.entity';
+import { Transaction } from '../billing/entities/transaction.entity';
 import { LoginDto } from './dto/login.dto';
 import { CpfLoginDto } from './dto/cpf-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -17,18 +18,33 @@ const RESET_CODE_TTL_MIN = 15;
 export class AuthService {
   constructor(
     @InjectRepository(User) private usersRepo: Repository<User>,
+    @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
     private jwtService: JwtService,
     private mailService: MailService,
   ) {}
 
+  private async enforceTrialDue(user: User): Promise<User> {
+    if (!user.trialEndsAt || user.status !== 'ativo' || user.trialEndsAt.getTime() > Date.now()) return user;
+    const paidAfterTrial = await this.txRepo.count({
+      where: { userId: user.id, status: 'pago', createdAt: MoreThan(user.trialEndsAt) },
+    });
+    if (paidAfterTrial > 0) return user;
+    user.status = 'pendente';
+    user.accessHealth = false;
+    user.accessClube = false;
+    user.accessPet = false;
+    return this.usersRepo.save(user);
+  }
+
   async login(dto: LoginDto) {
-    const user = await this.usersRepo.findOne({
+    let user = await this.usersRepo.findOne({
       where: [{ email: dto.username }, { cpf: dto.username }],
     });
     if (!user) throw new UnauthorizedException('Credenciais inválidas.');
 
     const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordOk) throw new UnauthorizedException('Credenciais inválidas.');
+    user = await this.enforceTrialDue(user);
 
     const token = this.jwtService.sign({
       sub: user.id,
@@ -63,6 +79,7 @@ export class AuthService {
       throw new UnauthorizedException('Esse CPF é de titular. O login do Kids/Teen é só para dependentes.');
     }
 
+    if (user.holder) user.holder = await this.enforceTrialDue(user.holder);
     const activeStatus = user.holder?.status;
     if (activeStatus !== 'ativo') {
       throw new UnauthorizedException('Assinatura inativa. Fale com o titular da conta.');

@@ -24,6 +24,7 @@ import { HeirsModule } from './heirs/heirs.module';
 import { User } from './users/entities/user.entity';
 import { ReferralLink } from './referrals/entities/referral-link.entity';
 import { Transaction } from './billing/entities/transaction.entity';
+import { TrialSignupLink } from './billing/entities/trial-signup-link.entity';
 import { Activity } from './activities/entities/activity.entity';
 import { AppConfig } from './admin/entities/config.entity';
 import { Ticket } from './tickets/entities/ticket.entity';
@@ -45,7 +46,7 @@ import { Heir } from './heirs/entities/heir.entity';
       username: process.env.DB_USERNAME ?? 'root',
       password: process.env.DB_PASSWORD ?? '',
       database: process.env.DB_DATABASE ?? 'acesso_saude',
-      entities: [User, ReferralLink, Transaction, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal, Heir],
+      entities: [User, ReferralLink, Transaction, TrialSignupLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal, Heir],
       synchronize: false,
       migrationsRun: false,
     }),

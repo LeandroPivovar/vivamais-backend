@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, UseGuard
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UsersService } from '../users/users.service';
 import { AdminService } from './admin.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -37,6 +38,11 @@ export class AdminController {
   @Post('users/:id/reset-password')
   regeneratePassword(@Param('id', ParseIntPipe) id: number) {
     return this.adminService.regeneratePassword(id);
+  }
+
+  @Post('trial-links')
+  createTrialSignupLink(@CurrentUser() authUser: { id: number }, @Body() body: { plan?: string }) {
+    return this.adminService.createTrialSignupLink(body?.plan ?? '', authUser.id);
   }
 
   @Delete('users/:id')

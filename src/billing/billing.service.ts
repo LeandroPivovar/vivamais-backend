@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
+import { Between, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Transaction } from './entities/transaction.entity';
+import { TrialSignupLink } from './entities/trial-signup-link.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -18,11 +19,12 @@ import { TelegramService } from '../telegram/telegram.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
+import { TrialSignupDto } from './dto/trial-signup.dto';
 import { PayDto } from './dto/pay.dto';
 import { basePriceForPlan } from '../common/pricing';
 import { onlyDigits, formatBrazilPhone } from '../common/phone';
 import { publicUrl } from '../common/public-url';
-import { formatBrDate } from '../common/br-date';
+import { brDayWindow, formatBrDate } from '../common/br-date';
 
 // Teto de tentativas de cadastro na telemedicina antes de o cron desistir do registro.
 const MAX_TELEMED_ATTEMPTS = 5;
@@ -61,6 +63,7 @@ export class BillingService {
 
   constructor(
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+    @InjectRepository(TrialSignupLink) private trialLinksRepo: Repository<TrialSignupLink>,
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
     @InjectRepository(User) private usersRepo: Repository<User>,
     private usersService: UsersService,
@@ -104,7 +107,7 @@ export class BillingService {
     const method =
       txs.find((t) => isPaid(t.status))?.paymentMethod ?? txs[txs.length - 1]?.paymentMethod ?? 'PIX';
 
-    const start = new Date(user.createdAt);
+    const start = new Date(user.trialEndsAt ?? user.createdAt);
     const now = Date.now();
     const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
 
@@ -135,8 +138,8 @@ export class BillingService {
 
     const price = basePriceForPlan(user.plan, config); // cobra o valor da tabela do plano (79,90 / 129,90)
     const lastTx = await this.txRepo.findOne({ where: { userId, status: Not('duplicado') }, order: { createdAt: 'DESC' } });
-    const nextBilling = lastTx ? new Date(lastTx.createdAt) : new Date();
-    nextBilling.setMonth(nextBilling.getMonth() + 1);
+    const nextBilling = user.trialEndsAt && !lastTx ? new Date(user.trialEndsAt) : lastTx ? new Date(lastTx.createdAt) : new Date();
+    if (!user.trialEndsAt || lastTx) nextBilling.setMonth(nextBilling.getMonth() + 1);
 
     return {
       plan: user.plan,
@@ -156,6 +159,94 @@ export class BillingService {
   async registerReferralClick(refCode: string, planType?: string) {
     await this.referralsService.registerClickByRefCode(refCode, planType);
     return { ok: true };
+  }
+
+  async getTrialSignupLink(token: string) {
+    const link = await this.trialLinksRepo.findOne({ where: { token } });
+    if (!link || link.status !== 'active' || link.usedAt) {
+      throw new NotFoundException('Link de cadastro não encontrado ou já utilizado.');
+    }
+    return {
+      token: link.token,
+      plan: link.plan,
+      trialDays: 30,
+    };
+  }
+
+  async trialSignup(dto: TrialSignupDto) {
+    const initialPassword = generatePassword();
+    const passwordHash = await bcrypt.hash(initialPassword, 10);
+
+    const { user, trialEndsAt } = await this.trialLinksRepo.manager.transaction(async (manager) => {
+      const link = await manager.findOne(TrialSignupLink, {
+        where: { token: dto.token },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!link || link.status !== 'active' || link.usedAt) {
+        throw new BadRequestException('Este link de cadastro já foi utilizado ou não está disponível.');
+      }
+
+      const existing = await manager.findOne(User, { where: [{ email: dto.email }, { cpf: dto.cpf }] });
+      if (existing) throw new BadRequestException('Já existe uma conta com esse e-mail ou CPF.');
+
+      const due = new Date();
+      due.setDate(due.getDate() + 30);
+
+      const savedUser = await manager.save(
+        User,
+        manager.create(User, {
+          name: dto.name,
+          email: dto.email,
+          cpf: dto.cpf,
+          phone: dto.phone,
+          birthDate: dto.birthDate,
+          gender: dto.gender as User['gender'],
+          address: dto.address,
+          neighborhood: dto.neighborhood,
+          complement: dto.complement ?? null,
+          city: dto.city,
+          state: dto.state,
+          zipCode: dto.zipCode,
+          passwordHash,
+          plan: link.plan as User['plan'],
+          level: '1º Nível',
+          referredById: null,
+          status: 'ativo',
+          accessHealth: true,
+          accessClube: true,
+          accessPet: true,
+          accessFuneral: false,
+          trialEndsAt: due,
+        }),
+      );
+
+      link.status = 'used';
+      link.usedAt = new Date();
+      link.usedById = savedUser.id;
+      await manager.save(TrialSignupLink, link);
+
+      return { user: savedUser, trialEndsAt: due };
+    });
+
+    await this.mailService.sendWelcomePassword(user.email, user.name, initialPassword);
+    try {
+      await this.mailService.sendWelcome(user.email);
+    } catch (err) {
+      this.logger.warn(`Falha ao enviar boas-vindas do cadastro 30 dias (user ${user.id}): ${(err as Error).message}`);
+    }
+    const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
+    if (venccaOk) {
+      user.telemedRegistered = true;
+      await this.usersRepo.save(user);
+    }
+    await this.clubeCertoService.registerAssociate(user);
+
+    return {
+      success: true,
+      status: 'trial_active',
+      user: { name: user.name, plan: user.plan, active: true },
+      trialEndsAt: formatDate(trialEndsAt),
+    };
   }
 
   async checkout(dto: CheckoutDto, clientIp?: string) {
@@ -715,7 +806,7 @@ export class BillingService {
     // (telemedicina, clube de descontos, veterinário) — sem depender do admin.
     // `firstActivation` separa a ativação inicial das renovações: boas-vindas e
     // avisos de liberação de benefício só fazem sentido na primeira vez.
-    const firstActivation = user.status !== 'ativo';
+    const firstActivation = user.status !== 'ativo' && !user.trialEndsAt;
     if (user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet) {
       user.status = 'ativo';
       user.accessHealth = true;
@@ -1382,6 +1473,80 @@ export class BillingService {
       this.logger.error(`Reconciliação de acesso pago falhou: ${(err as Error).message}`);
     } finally {
       this.reconcilingPaidAccess = false;
+    }
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async expireTrialSignupAccounts() {
+    const due = await this.usersRepo.find({
+      where: {
+        holderId: IsNull(),
+        status: 'ativo',
+        trialEndsAt: LessThan(new Date()),
+      },
+      order: { trialEndsAt: 'ASC' },
+      take: 100,
+    });
+    if (!due.length) return;
+
+    let blocked = 0;
+    for (const user of due) {
+      try {
+        const paidAfterTrial = user.trialEndsAt
+          ? await this.txRepo.count({ where: { userId: user.id, status: 'pago', createdAt: MoreThan(user.trialEndsAt) } })
+          : 0;
+        if (paidAfterTrial > 0) continue;
+        user.status = 'pendente';
+        user.accessHealth = false;
+        user.accessClube = false;
+        user.accessPet = false;
+        await this.usersRepo.save(user);
+        blocked += 1;
+      } catch (err) {
+        this.logger.warn(`Bloqueio do cadastro 30 dias falhou (user ${user.id}): ${(err as Error).message}`);
+      }
+    }
+    if (blocked) this.logger.log(`Cadastro 30 dias: ${blocked} usuário(s) bloqueado(s) após vencimento.`);
+  }
+
+  @Cron('0 9 * * *', { timeZone: 'America/Sao_Paulo' })
+  async remindTrialSignupPayments() {
+    const config = await this.configRepo.findOne({ where: {} });
+    if (!config) return;
+
+    for (const days of [7, 3, 1] as const) {
+      const target = new Date();
+      target.setDate(target.getDate() + days);
+      const { start, endInclusive } = brDayWindow(target);
+      const field = `trialReminder${days}At` as 'trialReminder7At' | 'trialReminder3At' | 'trialReminder1At';
+      const users = await this.usersRepo.find({
+        where: {
+          holderId: IsNull(),
+          status: 'ativo',
+          trialEndsAt: Between(start, endInclusive),
+          [field]: IsNull(),
+        },
+        order: { trialEndsAt: 'ASC' },
+        take: 200,
+      });
+
+      for (const user of users) {
+        user[field] = new Date();
+        await this.usersRepo.save(user);
+        try {
+          await this.mailService.sendTrialPaymentReminder(
+            user.email,
+            user.name,
+            user.plan,
+            formatCurrency(basePriceForPlan(user.plan, config)),
+            formatDate(user.trialEndsAt!),
+            days,
+          );
+        } catch (err) {
+          this.logger.warn(`Lembrete de cadastro 30 dias falhou (user ${user.id}, ${days}d): ${(err as Error).message}`);
+        }
+      }
+      if (users.length) this.logger.log(`Cadastro 30 dias: ${users.length} lembrete(s) de ${days} dia(s) processado(s).`);
     }
   }
 

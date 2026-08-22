@@ -1,8 +1,10 @@
-import { NotFoundException, Injectable } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
 import { AppConfig } from './entities/config.entity';
 import { Transaction } from '../billing/entities/transaction.entity';
+import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -12,6 +14,7 @@ import { MailService } from '../mail/mail.service';
 import { mmnForPlan, basePriceForPlan } from '../common/pricing';
 import { ageGroup } from '../common/age';
 import { brDateKey, formatBrDate } from '../common/br-date';
+import { publicUrl } from '../common/public-url';
 
 /** Senha temporária legível (sem caracteres ambíguos como O/0, l/1). */
 function generatePassword(length = 8): string {
@@ -45,6 +48,7 @@ export class AdminService {
   constructor(
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+    @InjectRepository(TrialSignupLink) private trialLinksRepo: Repository<TrialSignupLink>,
     private usersService: UsersService,
     private venccaService: VenccaService,
     private clubeCertoService: ClubeCertoService,
@@ -122,6 +126,30 @@ export class AdminService {
       await this.mailService.sendNewPassword(user.email, user.name, password);
     }
     return { password, email: user.email, name: user.name };
+  }
+
+  async createTrialSignupLink(plan: string, adminId: number) {
+    if (!['Individual', 'Família'].includes(plan)) {
+      throw new BadRequestException('Plano inválido para cadastro 30 dias.');
+    }
+    const token = randomBytes(24).toString('hex');
+    const link = await this.trialLinksRepo.save(
+      this.trialLinksRepo.create({
+        token,
+        plan: plan as 'Individual' | 'Família',
+        createdById: adminId,
+        usedById: null,
+        usedAt: null,
+        status: 'active',
+      }),
+    );
+    return {
+      id: link.id,
+      token: link.token,
+      plan: link.plan,
+      url: publicUrl(`/cadastro-30-dias/${link.token}`),
+      used: false,
+    };
   }
 
   async updateConfig(dto: UpdateConfigDto): Promise<AdminConfigResponse> {

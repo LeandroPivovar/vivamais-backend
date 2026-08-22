@@ -442,6 +442,32 @@ ${opts.heroHtml ?? ''}
     await this.send(to, 'Seu pagamento ainda está pendente — Viva Mais Club', html);
   }
 
+  async sendTrialPaymentReminder(
+    to: string,
+    name: string,
+    plan: string,
+    value: string,
+    dueDate: string,
+    daysBefore: number,
+  ): Promise<void> {
+    void name;
+    const html = this.kidsTeensShell({
+      title: 'Renovação próxima | Viva Mais Club',
+      heading: `Sua assinatura vence em ${daysBefore} dia${daysBefore === 1 ? '' : 's'}`,
+      bodyHtml:
+        this.p(
+          `Seu período inicial de 30 dias do plano <strong>${escapeHtml(plan)}</strong> termina em <strong>${escapeHtml(dueDate)}</strong>.`,
+        ) +
+        this.p(`Para continuar com todos os benefícios ativos, finalize o pagamento mensal de <strong>${escapeHtml(value)}</strong>.`) +
+        this.p(
+          'Depois do vencimento, os acessos a serviços ficam bloqueados até a regularização. Você pode pagar por Pix ou cartão na área financeira.',
+        ),
+      ctaLabel: 'Ir para pagamento →',
+      ctaUrl: `${PORTAL_URL}/financeiro`,
+    });
+    await this.send(to, `Sua assinatura vence em ${daysBefore} dia${daysBefore === 1 ? '' : 's'} — Viva Mais Club`, html);
+  }
+
   /** Renovação automática (PIX Automático) ativada. */
   async sendAutoRenewalActive(to: string): Promise<void> {
     const html = this.kidsTeensShell({
