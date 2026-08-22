@@ -56,6 +56,7 @@ export class BillingService {
   private readonly webhookDedupe = new Map<string, number>();
   private reconciling = false;
   private reconcilingPagarme = false;
+  private reconcilingPaidAccess = false;
   private retryingTelemed = false;
 
   constructor(
@@ -92,6 +93,7 @@ export class BillingService {
    * gerar vários QRs não multiplica faturas, e pagar (mesmo atrasado) quita a mais antiga.
    */
   async listInvoices(userId: number) {
+    await this.ensurePaidAccessForUser(userId);
     const user = await this.usersService.findById(userId);
     const config = await this.configRepo.findOne({ where: {} });
     const price = config ? basePriceForPlan(user.plan, config) : 0;
@@ -126,6 +128,7 @@ export class BillingService {
   }
 
   async getSummary(userId: number) {
+    await this.ensurePaidAccessForUser(userId);
     const user = await this.usersService.findById(userId);
     const config = await this.configRepo.findOne({ where: {} });
     if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
@@ -457,6 +460,7 @@ export class BillingService {
       }
     }
 
+    await this.ensurePaidAccessForUser(userId);
     const user = await this.usersService.findById(userId);
     const config = await this.configRepo.findOne({ where: {} });
     if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
@@ -720,8 +724,11 @@ export class BillingService {
       await this.usersRepo.save(user);
     }
     if (link) {
-      const { bonus, commission } = await this.referralsService.registerConversion(link.id);
-      if (bonus > 0) {
+      const shouldCreditReferral = Number(transaction.referralBonus ?? 0) <= 0 && !user.referralBonusPaid;
+      const { bonus, commission } = shouldCreditReferral
+        ? await this.referralsService.registerConversion(link.id)
+        : { bonus: Number(transaction.referralBonus ?? 0), commission: 0 };
+      if (shouldCreditReferral && bonus > 0) {
         transaction.referralBonus = bonus;
         await this.txRepo.save(transaction);
         // Marca no indicado (não no indicador) que essa indicação rendeu o bônus --
@@ -734,7 +741,7 @@ export class BillingService {
       // Best-effort: o pagamento do indicado não pode falhar aqui.
       try {
         const referrer = await this.usersRepo.findOne({ where: { id: link.userId } });
-        if (referrer?.email) {
+        if (shouldCreditReferral && referrer?.email) {
           const credited = commission + bonus;
           await this.mailService.sendCommissionProcessed(
             referrer.email,
@@ -816,6 +823,53 @@ export class BillingService {
         await this.telegramService.notifyError(errInfo);
       }
     }
+  }
+
+  private async ensurePaidAccessForUser(userId: number): Promise<boolean> {
+    const paid = await this.txRepo.findOne({
+      where: { userId, status: 'pago' },
+      order: { createdAt: 'DESC' },
+    });
+    if (!paid) return false;
+    return this.ensurePaidAccess(paid);
+  }
+
+  private async ensurePaidAccess(tx: Transaction): Promise<boolean> {
+    if (tx.status !== 'pago') return false;
+    const user = await this.usersService.findById(tx.userId);
+    const missingAccess = user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet;
+
+    if (missingAccess) {
+      user.status = 'ativo';
+      user.accessHealth = true;
+      user.accessClube = true;
+      user.accessPet = true;
+      await this.usersRepo.save(user);
+    }
+
+    await this.txRepo
+      .createQueryBuilder()
+      .update(Transaction)
+      .set({ status: 'duplicado' })
+      .where('userId = :userId', { userId: user.id })
+      .andWhere('id <> :paidId', { paidId: tx.id })
+      .andWhere('status = :pending', { pending: 'pendente' })
+      .andWhere('gatewayIdentifier LIKE :activation', { activation: 'vm-activate-%' })
+      .execute();
+
+    if (missingAccess) {
+      if (!user.telemedRegistered) {
+        const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
+        if (venccaOk) {
+          user.telemedRegistered = true;
+          await this.usersRepo.save(user);
+        }
+      }
+      await this.clubeCertoService.registerAssociate(user);
+      this.logger.warn(`Acesso reconciliado para usuário ${user.id} a partir da tx paga ${tx.id}.`);
+    }
+
+    return missingAccess;
   }
 
   /**
@@ -1289,6 +1343,45 @@ export class BillingService {
       this.logger.error(`Polling Pagar.me falhou: ${(err as Error).message}`);
     } finally {
       this.reconcilingPagarme = false;
+    }
+  }
+
+  /**
+   * Rede de segurança: se existe lançamento pago, o titular não pode continuar
+   * pendente nem sem benefícios. Também limpa pendências de ativação criadas depois
+   * de um pagamento já confirmado.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async reconcilePaidAccess() {
+    if (this.reconcilingPaidAccess) return;
+    this.reconcilingPaidAccess = true;
+    try {
+      const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      const paid = await this.txRepo
+        .createQueryBuilder('tx')
+        .innerJoin('tx.user', 'user')
+        .where('tx.status = :paid', { paid: 'pago' })
+        .andWhere('tx.createdAt > :since', { since })
+        .andWhere('(user.status <> :active OR user.accessHealth = false OR user.accessClube = false OR user.accessPet = false)', {
+          active: 'ativo',
+        })
+        .orderBy('tx.createdAt', 'DESC')
+        .take(100)
+        .getMany();
+
+      let fixed = 0;
+      for (const tx of paid) {
+        try {
+          if (await this.ensurePaidAccess(tx)) fixed += 1;
+        } catch (err) {
+          this.logger.warn(`Reconciliação de acesso da tx ${tx.id} falhou: ${(err as Error).message}`);
+        }
+      }
+      if (fixed) this.logger.log(`Reconciliação de acesso: ${fixed} usuário(s) ativado(s).`);
+    } catch (err) {
+      this.logger.error(`Reconciliação de acesso pago falhou: ${(err as Error).message}`);
+    } finally {
+      this.reconcilingPaidAccess = false;
     }
   }
 
