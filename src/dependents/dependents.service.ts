@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { MailService } from '../mail/mail.service';
 import { VenccaService } from '../vencca/vencca.service';
+import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { CreateDependentDto } from './dto/create-dependent.dto';
 import { ageGroup } from '../common/age';
 
@@ -36,6 +37,7 @@ export class DependentsService {
     @InjectRepository(AppConfig) private configRepo: Repository<AppConfig>,
     private mailService: MailService,
     private venccaService: VenccaService,
+    private clubeCertoService: ClubeCertoService,
   ) {}
 
   /** Limite de dependentes do plano do titular. */
@@ -106,14 +108,13 @@ export class DependentsService {
       phone: dto.phone ?? null,
       birthDate: dto.birthDate ?? null,
       passwordHash: await bcrypt.hash(password, 10),
-      plan: holder.plan, // herda o plano do titular, sem acesso a funcionalidades
+      plan: holder.plan,
       holderId,
       status: 'ativo',
-      // Sem funcionalidades por enquanto: nenhum benefício ativo.
-      accessHealth: false,
-      accessClube: false,
-      accessPet: false,
-      accessFuneral: false,
+      accessHealth: holder.accessHealth,
+      accessClube: holder.accessClube,
+      accessPet: holder.accessPet,
+      accessFuneral: holder.accessFuneral,
     });
     const saved = await this.usersRepo.save(dependent);
     const group = ageGroup(saved.birthDate);
@@ -157,6 +158,15 @@ export class DependentsService {
         saved.telemedRegistered = true;
         await this.usersRepo.save(saved);
       }
+    }
+
+    // Clube de Descontos: dependente precisa existir no Clube Certo para abrir o
+    // webapp com o próprio CPF quando acessa pelo login de dependente.
+    if (saved.accessClube) {
+      await this.clubeCertoService.registerAssociate({
+        ...saved,
+        gender: saved.gender ?? holder.gender,
+      });
     }
 
     return this.toResponse(saved);
