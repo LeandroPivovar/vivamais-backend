@@ -1,5 +1,6 @@
 const DEFAULT_PRIMARY_ORIGIN = 'https://conta.vivamaisclub.net';
 const DEFAULT_COMPAT_ORIGINS = ['https://conta.vivamaisclub.com'];
+const DEFAULT_APP_ORIGINS = ['https://localhost', 'capacitor://localhost'];
 
 function normalizeOrigin(value: string | undefined | null): string | null {
   const raw = (value ?? '').trim();
@@ -39,6 +40,7 @@ export function publicCompatOrigins(): string[] {
 export function corsAllowedOrigins(): string[] {
   return [
     ...publicCompatOrigins(),
+    ...DEFAULT_APP_ORIGINS,
     ...listFromEnv('CORS_ORIGIN'),
   ].filter((origin, index, arr) => arr.indexOf(origin) === index);
 }
