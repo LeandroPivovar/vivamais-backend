@@ -1,5 +1,7 @@
 import { Type, Transform } from 'class-transformer';
 import { IsEmail, IsIn, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import { IsCpf } from '../../common/cpf';
+import { IsBirthDate, normalizeBirthDate } from '../../common/birth-date';
 import { AccessDto } from './access.dto';
 
 export class CreateUserDto {
@@ -11,7 +13,7 @@ export class CreateUserDto {
 
   // Normaliza para 11 dígitos e valida (evita CPF formatado/inválido no banco).
   @Transform(({ value }) => (typeof value === 'string' ? value.replace(/\D/g, '') : value))
-  @Matches(/^\d{11}$/, { message: 'CPF inválido: informe os 11 dígitos.' })
+  @IsCpf()
   cpf: string;
 
   @IsOptional()
@@ -23,7 +25,8 @@ export class CreateUserDto {
   phone?: string;
 
   /** DD/MM/AAAA — mesmo formato exigido pela Vencca. */
-  @IsString()
+  @Transform(({ value }) => normalizeBirthDate(value) ?? value)
+  @IsBirthDate()
   birthDate: string;
 
   @IsIn(['MASCULINO', 'FEMININO'])

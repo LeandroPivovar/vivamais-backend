@@ -1,4 +1,6 @@
 import { IsEmail, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsCpf } from '../../common/cpf';
+import { IsBirthDate, normalizeBirthDate } from '../../common/birth-date';
 import { Transform } from 'class-transformer';
 
 export class CheckoutDto {
@@ -17,14 +19,15 @@ export class CheckoutDto {
   // Normaliza para 11 dígitos (tira pontos/traço/espaços) e valida — evita CPF
   // formatado/inválido chegar no banco e nas integrações (Woovi/Vencca).
   @Transform(({ value }) => (typeof value === 'string' ? value.replace(/\D/g, '') : value))
-  @Matches(/^\d{11}$/, { message: 'CPF inválido: informe os 11 dígitos.' })
+  @IsCpf()
   cpf: string;
 
   @IsString()
   phone: string;
 
   /** DD/MM/AAAA — exigido pela Vencca pro cadastro de associado. */
-  @IsString()
+  @Transform(({ value }) => normalizeBirthDate(value) ?? value)
+  @IsBirthDate()
   birthDate: string;
 
   @IsIn(['MASCULINO', 'FEMININO'])
