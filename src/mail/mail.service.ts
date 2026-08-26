@@ -122,7 +122,9 @@ export class MailService {
         ) +
         `<div style="margin:24px 0;padding:20px;border:1px solid #b8ece8;border-radius:12px;background:#f2fbfa;text-align:center;font-family:Montserrat,Arial,sans-serif;font-size:30px;font-weight:700;letter-spacing:9px;color:#002e73">${code}</div>`,
       ctaLabel: 'Redefinir senha →',
-      ctaUrl: PORTAL_URL,
+      // Cai direto no passo do código. Sem o ?redefinir o link abria o login comum,
+      // e reabrir o fluxo por lá gerava um código novo, invalidando o deste e-mail.
+      ctaUrl: `${PORTAL_URL}/?redefinir=1`,
     });
     await this.send(to, 'Seu código de recuperação — Viva Mais Club', html);
   }
