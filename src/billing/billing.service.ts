@@ -17,6 +17,7 @@ import { ClubeCertoService } from '../clube-certo/clube-certo.service';
 import { MailService } from '../mail/mail.service';
 import { TelegramService } from '../telegram/telegram.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MassflowService } from '../massflow/massflow.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
 import { TrialSignupDto } from './dto/trial-signup.dto';
@@ -28,6 +29,8 @@ import { brDayWindow, formatBrDate } from '../common/br-date';
 
 // Teto de tentativas de cadastro na telemedicina antes de o cron desistir do registro.
 const MAX_TELEMED_ATTEMPTS = 5;
+// Tempo parado em 'pendente' antes de virar lead de carrinho abandonado.
+const CART_ABANDON_MINUTES = 5;
 
 /** Data YYYY-MM-DD daqui a N dias (vencimento do PIX). */
 function dueDateInDays(days: number): string {
@@ -60,6 +63,7 @@ export class BillingService {
   private reconcilingPagarme = false;
   private reconcilingPaidAccess = false;
   private retryingTelemed = false;
+  private notifyingCarts = false;
 
   constructor(
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
@@ -76,6 +80,7 @@ export class BillingService {
     private mailService: MailService,
     private telegramService: TelegramService,
     private notificationsService: NotificationsService,
+    private massflowService: MassflowService,
   ) {}
 
   private onceWebhook(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
@@ -884,6 +889,16 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(transaction.value)),
     );
+    // Esteira de compra no MassFlow (WhatsApp). Best-effort, como as demais.
+    void this.massflowService.notifyPurchase({
+      name: user.name,
+      phone: user.phone,
+      email: user.email,
+      plan: transaction.plan,
+      value: Number(transaction.value),
+      transactionId: transaction.id,
+      paymentMethod: transaction.paymentMethod,
+    });
     // Notifica a venda confirmada (Telegram + WhatsApp/Z-API; no-op se não configurados).
     const saleInfo = {
       transactionId: transaction.id,
@@ -1547,6 +1562,55 @@ export class BillingService {
         }
       }
       if (users.length) this.logger.log(`Cadastro 30 dias: ${users.length} lembrete(s) de ${days} dia(s) processado(s).`);
+    }
+  }
+
+  /**
+   * Carrinho abandonado: cobrança parada em 'pendente' há mais de 5 minutos vira
+   * lead na esteira de WhatsApp do MassFlow. Dispara UMA vez por lançamento
+   * (cartWebhookAt trava o reenvio) e só depois de conferir que a conta não ficou
+   * ativa nesse meio-tempo — pagamento confirmado não é carrinho abandonado.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async notifyAbandonedCarts() {
+    if (this.notifyingCarts) return;
+    this.notifyingCarts = true;
+    try {
+      const cutoff = new Date(Date.now() - CART_ABANDON_MINUTES * 60 * 1000);
+      const pending = await this.txRepo.find({
+        where: { status: 'pendente', cartWebhookAt: IsNull(), createdAt: LessThan(cutoff) },
+        order: { createdAt: 'ASC' },
+        take: 50,
+      });
+      if (!pending.length) return;
+
+      for (const tx of pending) {
+        // Marca antes de enviar: falha de rede não pode virar disparo em loop.
+        tx.cartWebhookAt = new Date();
+        await this.txRepo.save(tx);
+        try {
+          const user = await this.usersService.findById(tx.userId);
+          if (user.status === 'ativo') continue; // pagou por outro caminho
+          const minutes = Math.round((Date.now() - new Date(tx.createdAt).getTime()) / 60000);
+          await this.massflowService.notifyAbandonedCart({
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            plan: tx.plan,
+            value: Number(tx.value),
+            transactionId: tx.id,
+            paymentMethod: tx.paymentMethod,
+            minutesPending: minutes,
+            checkoutUrl: publicUrl('/financeiro'),
+          });
+        } catch (err) {
+          this.logger.warn(`Webhook de carrinho falhou (tx ${tx.id}): ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Rotina de carrinho abandonado falhou: ${(err as Error).message}`);
+    } finally {
+      this.notifyingCarts = false;
     }
   }
 

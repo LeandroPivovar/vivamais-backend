@@ -44,6 +44,10 @@ export class Transaction {
   @Column({ type: 'datetime', nullable: true })
   pendingReminderAt: Date | null;
 
+  /** Quando o webhook de carrinho abandonado (MassFlow) foi disparado — nulo = não disparado. */
+  @Column({ type: 'datetime', nullable: true })
+  cartWebhookAt: Date | null;
+
   // --- Rastreio no gateway ---
   // Qual gateway processou este lançamento: 'veenca' | 'woovi'.
   @Column({ type: 'varchar', length: 20, default: 'veenca' })
