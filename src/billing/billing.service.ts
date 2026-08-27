@@ -18,6 +18,7 @@ import { MailService } from '../mail/mail.service';
 import { TelegramService } from '../telegram/telegram.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MassflowService } from '../massflow/massflow.service';
+import { MetaCapiService } from '../meta/meta-capi.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
 import { TrialSignupDto } from './dto/trial-signup.dto';
@@ -81,6 +82,7 @@ export class BillingService {
     private telegramService: TelegramService,
     private notificationsService: NotificationsService,
     private massflowService: MassflowService,
+    private metaCapiService: MetaCapiService,
   ) {}
 
   private onceWebhook(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
@@ -889,6 +891,21 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(transaction.value)),
     );
+    // Purchase na Conversions API da Meta. O pixel do navegador só dispara quando o
+    // pagamento fecha na hora (cartão); no PIX o cliente já saiu da tela, então é
+    // daqui que a venda é reportada. Mesmo event_id nos dois lados = sem duplicata.
+    void this.metaCapiService.trackPurchase({
+      transactionId: transaction.id,
+      value: Number(transaction.value),
+      planName: transaction.plan,
+      email: user.email,
+      phone: user.phone,
+      firstName: (user.name ?? '').trim().split(/\s+/)[0] ?? null,
+      lastName: (user.name ?? '').trim().split(/\s+/).slice(1).join(' ') || null,
+      city: user.city,
+      state: user.state,
+      zipCode: user.zipCode,
+    });
     // Esteira de compra no MassFlow (WhatsApp). Best-effort, como as demais.
     void this.massflowService.notifyPurchase({
       name: user.name,

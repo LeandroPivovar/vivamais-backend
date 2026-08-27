@@ -33,6 +33,7 @@ import { ChatConversation } from './chat/entities/chat-conversation.entity';
 import { ChatMessage } from './chat/entities/chat-message.entity';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { MassflowModule } from './massflow/massflow.module';
+import { MetaModule } from './meta/meta.module';
 import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
 import { Heir } from './heirs/entities/heir.entity';
 
@@ -71,6 +72,7 @@ import { Heir } from './heirs/entities/heir.entity';
     NotificationsModule,
     WithdrawalsModule,
     MassflowModule,
+    MetaModule,
     HeirsModule,
   ],
 })
