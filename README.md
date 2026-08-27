@@ -9,13 +9,10 @@ npm install
 cp .env.example .env   # ajustar credenciais do MySQL local
 mysql -u root -e "CREATE DATABASE acesso_saude"
 npm run migration:run
-npm run seed
 npm run start:dev
 ```
 
 Backend sobe em `http://localhost:3011/api`.
-
-Login seedado (admin): `joao.silva@email.com` / `senha123`.
 
 ## Deploy (VPS, mesmo padrão do nucleo-crm)
 
