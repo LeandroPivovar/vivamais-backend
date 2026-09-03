@@ -155,4 +155,22 @@ export class UpdateConfigDto {
   @IsOptional()
   @IsString()
   clubeCertoCompanyId?: string;
+
+  // --- Meta (Facebook) — Conversions API ---
+  @IsOptional()
+  @IsBoolean()
+  metaCapiEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  metaPixelId?: string;
+
+  /** Vazio ou mascarado (••••) = manter o token gravado. Ver AdminService.updateConfig. */
+  @IsOptional()
+  @IsString()
+  metaCapiToken?: string;
+
+  @IsOptional()
+  @IsString()
+  metaTestEventCode?: string;
 }

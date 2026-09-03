@@ -32,7 +32,7 @@ function generatePassword(length = 8): string {
  */
 export type AdminConfigResponse = Omit<
   AppConfig,
-  'veencaSecretKey' | 'clubeCertoPassword' | 'wooviAppId' | 'pagarmeSecretKey'
+  'veencaSecretKey' | 'clubeCertoPassword' | 'wooviAppId' | 'pagarmeSecretKey' | 'metaCapiToken'
 > & {
   veencaSecretKeySet: boolean;
   veencaSecretKeyLast4: string | null;
@@ -41,6 +41,8 @@ export type AdminConfigResponse = Omit<
   wooviAppIdLast4: string | null;
   pagarmeSecretKeySet: boolean;
   pagarmeSecretKeyLast4: string | null;
+  metaCapiTokenSet: boolean;
+  metaCapiTokenLast4: string | null;
 };
 
 @Injectable()
@@ -64,7 +66,8 @@ export class AdminService {
 
   /** Config para o painel: sem segredos (gateway/Clube Certo), só o indicativo de que existem. */
   async getConfigForAdmin(): Promise<AdminConfigResponse> {
-    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, ...safe } = await this.getConfig();
+    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, metaCapiToken, ...safe } =
+      await this.getConfig();
     return {
       ...safe,
       veencaSecretKeySet: !!veencaSecretKey,
@@ -74,6 +77,8 @@ export class AdminService {
       wooviAppIdLast4: wooviAppId ? wooviAppId.slice(-4) : null,
       pagarmeSecretKeySet: !!pagarmeSecretKey,
       pagarmeSecretKeyLast4: pagarmeSecretKey ? pagarmeSecretKey.slice(-4) : null,
+      metaCapiTokenSet: !!metaCapiToken,
+      metaCapiTokenLast4: metaCapiToken ? metaCapiToken.slice(-4) : null,
     };
   }
 
@@ -154,7 +159,7 @@ export class AdminService {
 
   async updateConfig(dto: UpdateConfigDto): Promise<AdminConfigResponse> {
     const config = await this.getConfig();
-    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, ...rest } = dto;
+    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, metaCapiToken, ...rest } = dto;
     Object.assign(config, rest);
 
     // Campo vazio significa "manter a senha/chave atual" — o painel nunca recebe o
@@ -165,6 +170,8 @@ export class AdminService {
     if (wooviAppId?.trim() && !/^[•*]+$/.test(wooviAppId.trim())) config.wooviAppId = wooviAppId.trim();
     // Secret key Pagar.me: vazio ou mascarado = manter a gravada.
     if (pagarmeSecretKey?.trim() && !/^[•*]+$/.test(pagarmeSecretKey.trim())) config.pagarmeSecretKey = pagarmeSecretKey.trim();
+    // Token da Conversions API: vazio ou mascarado = manter o gravado.
+    if (metaCapiToken?.trim() && !/^[•*]+$/.test(metaCapiToken.trim())) config.metaCapiToken = metaCapiToken.trim();
 
     await this.configRepo.save(config);
     return this.getConfigForAdmin();
