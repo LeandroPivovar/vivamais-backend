@@ -807,6 +807,23 @@ export class BillingService {
     };
   }
 
+  /**
+   * Nome de quem indicou este cliente, para as notificações. null = venda direta.
+   * `findById` já traz a relação `referredBy`; a busca extra só existe para os
+   * caminhos que montam o User sem ela (ex.: usuário recém-criado no checkout).
+   */
+  private async referrerName(user: User): Promise<string | null> {
+    if (!user.referredById) return null;
+    if (user.referredBy?.name) return user.referredBy.name;
+    try {
+      const referrer = await this.usersService.findById(user.referredById);
+      return referrer?.name ?? `#${user.referredById}`;
+    } catch {
+      // Indicador apagado ou inacessível: o id ainda diz mais do que "venda direta".
+      return `#${user.referredById}`;
+    }
+  }
+
   /** Efeitos de pagamento confirmado: comissão do indicador + cadastro do associado na Vencca. */
   private async confirmPaid(transaction: Transaction, link: ReferralLink | null, user: User) {
     // Pagamento confirmado ativa a conta + libera os 3 benefícios inclusos no plano
@@ -933,6 +950,7 @@ export class BillingService {
       value: Number(transaction.value),
       method: transaction.paymentMethod,
       gateway: transaction.gatewayProvider ?? undefined,
+      referrer: await this.referrerName(user),
     });
     // Telemedicina falhou no cadastro? Avisa o grupo de erros (venda ok, mas benefício pendente).
     if (!venccaOk) {
@@ -1080,6 +1098,7 @@ export class BillingService {
       value: Number(renewal.value),
       method: renewal.paymentMethod,
       gateway: renewal.gatewayProvider ?? undefined,
+      referrer: await this.referrerName(user),
     });
     this.logger.log(
       `Renovação recorrente registrada: assinatura ${confirmed.subscriptionId}, user ${origin.userId}, tx ${confirmed.id}.`,
@@ -1153,6 +1172,7 @@ export class BillingService {
             value: Number(origin.value),
             method: origin.paymentMethod,
             gateway: origin.gatewayProvider ?? undefined,
+            referrer: await this.referrerName(user),
           });
         } else {
           const link = user.referredById
@@ -1186,6 +1206,7 @@ export class BillingService {
           value: Number(renewal.value),
           method: renewal.paymentMethod,
           gateway: renewal.gatewayProvider ?? undefined,
+          referrer: await this.referrerName(user),
         });
         this.logger.log(`Woovi: renovação recorrente paga (user ${origin.userId}, cobr ${chargeId}).`);
       }
@@ -1246,6 +1267,7 @@ export class BillingService {
           value: Number(tx.value),
           method: tx.paymentMethod,
           gateway: tx.gatewayProvider ?? undefined,
+          referrer: await this.referrerName(user),
         });
       }
     } else if (status === 'failed' && tx.status !== 'pago' && tx.status !== 'cancelado') {
@@ -1320,6 +1342,7 @@ export class BillingService {
         value: Number(renewal.value),
         method: renewal.paymentMethod,
         gateway: renewal.gatewayProvider ?? undefined,
+        referrer: await this.referrerName(user),
       });
       this.logger.log(`Pagar.me: renovação recorrente paga (user ${origin.userId}, charge ${chargeId}).`);
       return;

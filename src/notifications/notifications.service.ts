@@ -13,6 +13,8 @@ type SalePayload = {
   method?: string | null;
   gateway?: string | null;
   transactionId?: number | null;
+  /** Nome de quem indicou. Ausente/null = venda direta, sem indicação. */
+  referrer?: string | null;
 };
 
 type TicketPayload = {
@@ -143,6 +145,7 @@ export class NotificationsService {
         `Valor: ${money(payload.value)}`,
         `Metodo: ${payload.method ?? '-'}`,
         `Gateway: ${payload.gateway ?? '-'}`,
+        `Indicacao: ${payload.referrer?.trim() ? `sim - ${payload.referrer.trim()}` : 'nao - venda direta'}`,
       ].join('\n'),
     );
   }
