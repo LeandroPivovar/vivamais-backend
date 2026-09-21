@@ -32,6 +32,7 @@ import { brDayWindow, formatBrDate } from '../common/br-date';
 const MAX_TELEMED_ATTEMPTS = 5;
 // Tempo parado em 'pendente' antes de virar lead de carrinho abandonado.
 const CART_ABANDON_MINUTES = 5;
+const WOOVI_RENEWAL_MIN_INTERVAL_MS = 20 * 24 * 60 * 60 * 1000;
 
 /** Data YYYY-MM-DD daqui a N dias (vencimento do PIX). */
 function dueDateInDays(days: number): string {
@@ -54,6 +55,10 @@ function formatDate(date: Date): string {
 
 function formatCurrency(value: number): string {
   return `R$ ${value.toFixed(2).replace('.', ',')}`;
+}
+
+function compactDateKey(date = new Date()): string {
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
 @Injectable()
@@ -1148,9 +1153,54 @@ export class BillingService {
         const dup = await this.txRepo.findOne({ where: { gatewayTransactionId: String(chargeId) } });
         if (dup) return;
       } else if (origin.status !== 'pendente') {
-        this.logger.warn(
-          `Woovi: webhook ${event} sem id de cobranÃ§a ignorado para assinatura jÃ¡ processada (user ${origin.userId}).`,
+        if (!origin.gatewaySubscriptionId) {
+          this.logger.warn(
+            `Woovi: webhook ${event} sem id de cobrança e sem assinatura ignorado (user ${origin.userId}).`,
+          );
+          return;
+        }
+        const latestPaid = await this.txRepo.findOne({
+          where: { gatewaySubscriptionId: origin.gatewaySubscriptionId, gatewayProvider: 'woovi', status: 'pago' },
+          order: { createdAt: 'DESC' },
+        });
+        const latestPaidAt = latestPaid?.createdAt ?? origin.createdAt;
+        const elapsed = Date.now() - latestPaidAt.getTime();
+        if (elapsed < WOOVI_RENEWAL_MIN_INTERVAL_MS) {
+          this.logger.warn(
+            `Woovi: webhook ${event} sem id de cobrança ignorado como repetição do ciclo atual (user ${origin.userId}).`,
+          );
+          return;
+        }
+
+        const fallbackRenewalKey = `vm-renew-${origin.userId}-${origin.id}-${compactDateKey()}`;
+        const existingRenewal = await this.txRepo.findOne({ where: { gatewayIdentifier: fallbackRenewalKey } });
+        if (existingRenewal) return;
+
+        const renewal = await this.txRepo.save(
+          this.txRepo.create({
+            userId: origin.userId,
+            plan: origin.plan,
+            value: origin.value,
+            status: 'pago',
+            paymentMethod: 'Pix Automático',
+            commissionMmn: 0,
+            gatewayProvider: 'woovi',
+            gatewayIdentifier: fallbackRenewalKey,
+            gatewayTransactionId: null,
+            gatewaySubscriptionId: origin.gatewaySubscriptionId,
+          }),
         );
+        const user = await this.usersService.findById(origin.userId);
+        await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
+        await this.notificationsService.notifySale({
+          transactionId: renewal.id,
+          client: user.name,
+          plan: renewal.plan,
+          value: Number(renewal.value),
+          method: renewal.paymentMethod,
+          gateway: renewal.gatewayProvider ?? undefined,
+        });
+        this.logger.log(`Woovi: renovação recorrente paga sem chargeId (user ${origin.userId}, tx ${renewal.id}).`);
         return;
       }
 
