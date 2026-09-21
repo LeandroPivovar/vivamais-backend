@@ -1018,6 +1018,27 @@ export class BillingService {
     return missingAccess;
   }
 
+  private async notifyRenewalPaid(tx: Transaction, user?: User): Promise<void> {
+    const owner = user ?? (await this.usersService.findById(tx.userId));
+    await this.ensurePaidAccess(tx);
+    await this.mailService.sendPaymentConfirmed(
+      owner.email,
+      owner.name,
+      owner.plan,
+      formatCurrency(Number(tx.value)),
+    );
+    await this.notificationsService.notifySale({
+      transactionId: tx.id,
+      kind: 'renewal',
+      client: owner.name,
+      plan: tx.plan,
+      value: Number(tx.value),
+      method: tx.paymentMethod,
+      gateway: tx.gatewayProvider ?? undefined,
+      referrer: await this.referrerName(owner),
+    });
+  }
+
   /**
    * Processa webhook da Veenca.
    *
@@ -1082,29 +1103,16 @@ export class BillingService {
         plan: origin.plan,
         value: origin.value,
         status: 'pago',
+        paymentMethod: origin.paymentMethod,
         commissionMmn: 0, // renovação não gera comissão de indicação
+        gatewayProvider: origin.gatewayProvider,
         gatewayIdentifier: `vm-renew-${origin.userId}-${confirmed.id}`,
         gatewayTransactionId: confirmed.id,
         gatewaySubscriptionId: confirmed.subscriptionId,
       }),
     );
 
-    const user = await this.usersService.findById(origin.userId);
-    await this.mailService.sendPaymentConfirmed(
-      user.email,
-      user.name,
-      user.plan,
-      formatCurrency(Number(renewal.value)),
-    );
-    await this.notificationsService.notifySale({
-      transactionId: renewal.id,
-      client: user.name,
-      plan: renewal.plan,
-      value: Number(renewal.value),
-      method: renewal.paymentMethod,
-      gateway: renewal.gatewayProvider ?? undefined,
-      referrer: await this.referrerName(user),
-    });
+    await this.notifyRenewalPaid(renewal);
     this.logger.log(
       `Renovação recorrente registrada: assinatura ${confirmed.subscriptionId}, user ${origin.userId}, tx ${confirmed.id}.`,
     );
@@ -1191,15 +1199,7 @@ export class BillingService {
           }),
         );
         const user = await this.usersService.findById(origin.userId);
-        await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
-        await this.notificationsService.notifySale({
-          transactionId: renewal.id,
-          client: user.name,
-          plan: renewal.plan,
-          value: Number(renewal.value),
-          method: renewal.paymentMethod,
-          gateway: renewal.gatewayProvider ?? undefined,
-        });
+        await this.notifyRenewalPaid(renewal, user);
         this.logger.log(`Woovi: renovação recorrente paga sem chargeId (user ${origin.userId}, tx ${renewal.id}).`);
         return;
       }
@@ -1214,16 +1214,7 @@ export class BillingService {
         if (chargeId) origin.gatewayTransactionId = String(chargeId);
         const user = await this.usersService.findById(origin.userId);
         if (isRenewalSub) {
-          await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(origin.value)));
-          await this.notificationsService.notifySale({
-            transactionId: origin.id,
-            client: user.name,
-            plan: origin.plan,
-            value: Number(origin.value),
-            method: origin.paymentMethod,
-            gateway: origin.gatewayProvider ?? undefined,
-            referrer: await this.referrerName(user),
-          });
+          await this.notifyRenewalPaid(origin, user);
         } else {
           const link = user.referredById
             ? await this.referralsService.findLinkByOwnerAndPlan(user.referredById, user.plan)
@@ -1248,16 +1239,7 @@ export class BillingService {
           }),
         );
         const user = await this.usersService.findById(origin.userId);
-        await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
-        await this.notificationsService.notifySale({
-          transactionId: renewal.id,
-          client: user.name,
-          plan: renewal.plan,
-          value: Number(renewal.value),
-          method: renewal.paymentMethod,
-          gateway: renewal.gatewayProvider ?? undefined,
-          referrer: await this.referrerName(user),
-        });
+        await this.notifyRenewalPaid(renewal, user);
         this.logger.log(`Woovi: renovação recorrente paga (user ${origin.userId}, cobr ${chargeId}).`);
       }
     } else if (['PIX_AUTOMATIC_REJECTED', 'PIX_AUTOMATIC_COBR_REJECTED'].includes(event)) {
@@ -1309,16 +1291,7 @@ export class BillingService {
           : null;
         await this.confirmPaid(tx, link, user);
       } else {
-        await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(tx.value)));
-        await this.notificationsService.notifySale({
-          transactionId: tx.id,
-          client: user.name,
-          plan: tx.plan,
-          value: Number(tx.value),
-          method: tx.paymentMethod,
-          gateway: tx.gatewayProvider ?? undefined,
-          referrer: await this.referrerName(user),
-        });
+        await this.notifyRenewalPaid(tx, user);
       }
     } else if (status === 'failed' && tx.status !== 'pago' && tx.status !== 'cancelado') {
       tx.status = 'cancelado';
@@ -1384,16 +1357,7 @@ export class BillingService {
         }),
       );
       const user = await this.usersService.findById(origin.userId);
-      await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(Number(renewal.value)));
-      await this.notificationsService.notifySale({
-        transactionId: renewal.id,
-        client: user.name,
-        plan: renewal.plan,
-        value: Number(renewal.value),
-        method: renewal.paymentMethod,
-        gateway: renewal.gatewayProvider ?? undefined,
-        referrer: await this.referrerName(user),
-      });
+      await this.notifyRenewalPaid(renewal, user);
       this.logger.log(`Pagar.me: renovação recorrente paga (user ${origin.userId}, charge ${chargeId}).`);
       return;
     }
@@ -1417,14 +1381,7 @@ export class BillingService {
           : null;
         await this.confirmPaid(tx, link, user);
       } else {
-        // Renovação: confirma o pagamento por e-mail (sem comissão).
-        const user = await this.usersService.findById(tx.userId);
-        await this.mailService.sendPaymentConfirmed(
-          user.email,
-          user.name,
-          user.plan,
-          formatCurrency(Number(tx.value)),
-        );
+        await this.notifyRenewalPaid(tx);
       }
     } else if (
       ['FAILED', 'REFUNDED', 'CHARGED_BACK'].includes(veencaStatus) &&

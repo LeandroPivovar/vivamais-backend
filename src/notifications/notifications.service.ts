@@ -13,6 +13,7 @@ type SalePayload = {
   method?: string | null;
   gateway?: string | null;
   transactionId?: number | null;
+  kind?: 'sale' | 'renewal';
   /** Nome de quem indicou. Ausente/null = venda direta, sem indicação. */
   referrer?: string | null;
 };
@@ -136,9 +137,10 @@ export class NotificationsService {
   async notifySale(payload: SalePayload) {
     const key = payload.transactionId ? `sale:${payload.transactionId}` : `sale:${payload.client}:${payload.value}:${Date.now()}`;
     if (!this.once(key)) return;
+    const title = payload.kind === 'renewal' ? 'RENOVAÇÃO CONFIRMADA' : 'VENDA CONFIRMADA';
     await this.sendText(
       [
-        '*VENDA CONFIRMADA*',
+        `*${title}*`,
         '',
         `Cliente: ${payload.client ?? '-'}`,
         `Plano: ${payload.plan ?? '-'}`,
