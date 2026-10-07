@@ -33,6 +33,9 @@ const MAX_TELEMED_ATTEMPTS = 5;
 // Tempo parado em 'pendente' antes de virar lead de carrinho abandonado.
 const CART_ABANDON_MINUTES = 5;
 const WOOVI_RENEWAL_MIN_INTERVAL_MS = 20 * 24 * 60 * 60 * 1000;
+// Janela em que uma fatura paga do cartão sem lançamento ainda vira renovação (evita
+// reprocessar histórico antigo e disparar e-mail de pagamento de meses atrás).
+const PAGARME_RENEWAL_LOOKBACK_DAYS = 45;
 
 /** Data YYYY-MM-DD daqui a N dias (vencimento do PIX). */
 function dueDateInDays(days: number): string {
@@ -67,6 +70,7 @@ export class BillingService {
   private readonly webhookDedupe = new Map<string, number>();
   private reconciling = false;
   private reconcilingPagarme = false;
+  private reconcilingPagarmeRenewals = false;
   private reconcilingPaidAccess = false;
   private retryingTelemed = false;
   private notifyingCarts = false;
@@ -1322,26 +1326,57 @@ export class BillingService {
 
   /**
    * Webhook da Pagar.me (dashboard → /webhook/pagarme). Corpo é ponteiro; o status é
-   * revalidado por consulta autenticada. Cobrança mensal seguinte vira fatura paga nova.
+   * revalidado pelas faturas da assinatura. Cobrança mensal seguinte vira fatura paga nova.
    */
   async handlePagarmeWebhook(body: any) {
-    const { subscriptionId } = this.pagarmeService.parseWebhook(body);
-    if (!subscriptionId) return;
+    const { subscriptionId, type } = this.pagarmeService.parseWebhook(body);
+    if (!subscriptionId) {
+      this.logger.warn(`Pagar.me: webhook ${type ?? '?'} sem subscription_id ignorado.`);
+      return;
+    }
     const origin = await this.txRepo.findOne({
       where: { gatewaySubscriptionId: subscriptionId, gatewayProvider: 'pagarme' },
       order: { createdAt: 'ASC' },
     });
-    if (!origin) return;
-    const st = await this.pagarmeService.getLatestChargeStatus(subscriptionId);
-    if (!st) return;
+    if (!origin) {
+      this.logger.warn(`Pagar.me: webhook ${type ?? '?'} de assinatura desconhecida (${subscriptionId}) ignorado.`);
+      return;
+    }
+    await this.syncPagarmeSubscription(origin, { notifyFailure: true });
+  }
 
-    // Assinatura já paga + nova cobrança paga = renovação mensal → nova fatura paga.
-    if (st === 'paid' && origin.status === 'pago') {
-      const chargeId = body?.data?.id ?? body?.data?.last_transaction?.id;
-      if (chargeId) {
-        const dup = await this.txRepo.findOne({ where: { gatewayTransactionId: String(chargeId) } });
-        if (dup) return;
-      }
+  /**
+   * Alinha uma assinatura de cartão com as faturas da Pagar.me. Usado pelo webhook e
+   * pela reconciliação de hora em hora — idempotente (casa cada fatura pelo id da cobrança).
+   *  - 1ª cobrança ainda não liquidada aqui → fluxo de ativação/cancelamento (applyPagarmeStatus).
+   *  - Assinatura já paga → cada fatura paga seguinte (dos últimos PAGARME_RENEWAL_LOOKBACK_DAYS)
+   *    que ainda não tem lançamento vira renovação paga.
+   */
+  private async syncPagarmeSubscription(origin: Transaction, opts: { notifyFailure: boolean }) {
+    const subscriptionId = origin.gatewaySubscriptionId;
+    if (!subscriptionId) return;
+    const invoices = await this.pagarmeService.listSubscriptionInvoices(subscriptionId, 20);
+    if (!invoices?.length) return;
+
+    if (origin.status !== 'pago') {
+      const st = invoices[0].status;
+      if (st) await this.applyPagarmeStatus(origin, st);
+      return;
+    }
+
+    // A fatura paga mais antiga é a do próprio lançamento de origem; as seguintes são renovações.
+    const paid = invoices
+      .filter((inv) => inv.status === 'paid')
+      .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0));
+    const lookback = Date.now() - PAGARME_RENEWAL_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+    let user: User | null = null;
+    for (const inv of paid.slice(1)) {
+      const paidAt = inv.paidAt ?? inv.createdAt;
+      if (paidAt && paidAt.getTime() < lookback) continue;
+      const ref = inv.chargeId ?? inv.invoiceId;
+      if (!ref) continue;
+      const dup = await this.txRepo.findOne({ where: { gatewayTransactionId: ref } });
+      if (dup) continue;
       const renewal = await this.txRepo.save(
         this.txRepo.create({
           userId: origin.userId,
@@ -1351,18 +1386,20 @@ export class BillingService {
           paymentMethod: 'Cartão de Crédito',
           commissionMmn: 0,
           gatewayProvider: 'pagarme',
-          gatewayIdentifier: `vm-renew-${origin.userId}-${chargeId ?? Date.now()}`,
-          gatewayTransactionId: chargeId ? String(chargeId) : null,
+          gatewayIdentifier: `vm-renew-${origin.userId}-${ref}`,
+          gatewayTransactionId: ref,
           gatewaySubscriptionId: subscriptionId,
         }),
       );
-      const user = await this.usersService.findById(origin.userId);
+      user = user ?? (await this.usersService.findById(origin.userId));
       await this.notifyRenewalPaid(renewal, user);
-      this.logger.log(`Pagar.me: renovação recorrente paga (user ${origin.userId}, charge ${chargeId}).`);
-      return;
+      this.logger.log(`Pagar.me: renovação recorrente paga (user ${origin.userId}, charge ${ref}).`);
     }
 
-    await this.applyPagarmeStatus(origin, st);
+    // Recusa na cobrança mensal: só avisa no webhook (a reconciliação repetiria o aviso toda hora).
+    if (opts.notifyFailure && invoices[0].status === 'failed') {
+      await this.applyPagarmeStatus(origin, 'failed');
+    }
   }
 
   /**
@@ -1496,6 +1533,40 @@ export class BillingService {
       this.logger.error(`Polling Pagar.me falhou: ${(err as Error).message}`);
     } finally {
       this.reconcilingPagarme = false;
+    }
+  }
+
+  /**
+   * Rede de segurança das renovações no cartão: de hora em hora confere as faturas de
+   * cada assinatura Pagar.me já paga e lança as cobranças mensais pagas que o webhook
+   * não trouxe (webhook não cadastrado, fora do ar, evento perdido).
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async reconcilePagarmeRenewals() {
+    if (this.reconcilingPagarmeRenewals) return;
+    if (!(await this.pagarmeService.isEnabled())) return;
+    this.reconcilingPagarmeRenewals = true;
+    try {
+      const txs = await this.txRepo.find({
+        where: { status: 'pago', gatewayProvider: 'pagarme', gatewaySubscriptionId: Not(IsNull()) },
+        order: { createdAt: 'ASC' },
+      });
+      // Uma passada por assinatura, a partir do lançamento de origem (o mais antigo).
+      const seen = new Set<string>();
+      for (const tx of txs) {
+        const sub = tx.gatewaySubscriptionId!;
+        if (seen.has(sub)) continue;
+        seen.add(sub);
+        try {
+          await this.syncPagarmeSubscription(tx, { notifyFailure: false });
+        } catch (err) {
+          this.logger.warn(`Reconciliação de renovação Pagar.me (assinatura ${sub}) falhou: ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Reconciliação de renovações Pagar.me falhou: ${(err as Error).message}`);
+    } finally {
+      this.reconcilingPagarmeRenewals = false;
     }
   }
 
