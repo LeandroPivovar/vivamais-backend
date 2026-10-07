@@ -142,4 +142,15 @@ export class AppConfig {
   // em vez da atribuição real. Deixe vazio em produção.
   @Column({ type: 'varchar', length: 40, nullable: true })
   metaTestEventCode: string | null;
+
+  // --- MassFlow (automação de WhatsApp) ---
+  // As URLs carregam o token no path — tratadas como segredo, mascaradas na API do admin.
+  // Vazio = cai para o .env (MASSFLOW_WEBHOOK_PURCHASE / MASSFLOW_WEBHOOK_CART).
+  // Eventos: venda, renovação e os mesmos avisos que vão para o grupo de WhatsApp.
+  @Column({ type: 'text', nullable: true })
+  massflowWebhookUrl: string | null;
+
+  // Carrinho abandonado (cobrança parada em 'pendente') tem esteira própria no MassFlow.
+  @Column({ type: 'text', nullable: true })
+  massflowCartWebhookUrl: string | null;
 }

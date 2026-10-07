@@ -15,6 +15,7 @@ import { mmnForPlan, basePriceForPlan } from '../common/pricing';
 import { ageGroup } from '../common/age';
 import { brDateKey, formatBrDate } from '../common/br-date';
 import { publicUrl } from '../common/public-url';
+import { MassflowService, MassflowTarget, maskWebhookUrl } from '../massflow/massflow.service';
 
 /** Senha temporária legível (sem caracteres ambíguos como O/0, l/1). */
 function generatePassword(length = 8): string {
@@ -32,7 +33,13 @@ function generatePassword(length = 8): string {
  */
 export type AdminConfigResponse = Omit<
   AppConfig,
-  'veencaSecretKey' | 'clubeCertoPassword' | 'wooviAppId' | 'pagarmeSecretKey' | 'metaCapiToken'
+  | 'veencaSecretKey'
+  | 'clubeCertoPassword'
+  | 'wooviAppId'
+  | 'pagarmeSecretKey'
+  | 'metaCapiToken'
+  | 'massflowWebhookUrl'
+  | 'massflowCartWebhookUrl'
 > & {
   veencaSecretKeySet: boolean;
   veencaSecretKeyLast4: string | null;
@@ -43,7 +50,17 @@ export type AdminConfigResponse = Omit<
   pagarmeSecretKeyLast4: string | null;
   metaCapiTokenSet: boolean;
   metaCapiTokenLast4: string | null;
+  /** URL efetiva (painel ou .env), mascarada: host + 4 últimos caracteres. */
+  massflowWebhookUrlPreview: string | null;
+  massflowWebhookUrlSource: 'painel' | 'env' | null;
+  massflowCartWebhookUrlPreview: string | null;
+  massflowCartWebhookUrlSource: 'painel' | 'env' | null;
 };
+
+/** Valor vazio ou só bolinhas/asteriscos = o painel não mexeu no segredo gravado. */
+function isUnchangedSecret(value: string | undefined): boolean {
+  return !value?.trim() || /^[•*]+$/.test(value.trim());
+}
 
 @Injectable()
 export class AdminService {
@@ -55,6 +72,7 @@ export class AdminService {
     private venccaService: VenccaService,
     private clubeCertoService: ClubeCertoService,
     private mailService: MailService,
+    private massflowService: MassflowService,
   ) {}
 
   /** Config crua — uso interno (preços, gateway). Contém a chave secreta em texto puro. */
@@ -66,10 +84,23 @@ export class AdminService {
 
   /** Config para o painel: sem segredos (gateway/Clube Certo), só o indicativo de que existem. */
   async getConfigForAdmin(): Promise<AdminConfigResponse> {
-    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, metaCapiToken, ...safe } =
-      await this.getConfig();
+    const {
+      veencaSecretKey,
+      clubeCertoPassword,
+      wooviAppId,
+      pagarmeSecretKey,
+      metaCapiToken,
+      massflowWebhookUrl,
+      massflowCartWebhookUrl,
+      ...safe
+    } = await this.getConfig();
+    const massflow = await this.massflowService.urls();
     return {
       ...safe,
+      massflowWebhookUrlPreview: maskWebhookUrl(massflow.events),
+      massflowWebhookUrlSource: massflow.eventsSource,
+      massflowCartWebhookUrlPreview: maskWebhookUrl(massflow.cart),
+      massflowCartWebhookUrlSource: massflow.cartSource,
       veencaSecretKeySet: !!veencaSecretKey,
       veencaSecretKeyLast4: veencaSecretKey ? veencaSecretKey.slice(-4) : null,
       clubeCertoPasswordSet: !!clubeCertoPassword,
@@ -159,7 +190,16 @@ export class AdminService {
 
   async updateConfig(dto: UpdateConfigDto): Promise<AdminConfigResponse> {
     const config = await this.getConfig();
-    const { veencaSecretKey, clubeCertoPassword, wooviAppId, pagarmeSecretKey, metaCapiToken, ...rest } = dto;
+    const {
+      veencaSecretKey,
+      clubeCertoPassword,
+      wooviAppId,
+      pagarmeSecretKey,
+      metaCapiToken,
+      massflowWebhookUrl,
+      massflowCartWebhookUrl,
+      ...rest
+    } = dto;
     Object.assign(config, rest);
 
     // Campo vazio significa "manter a senha/chave atual" — o painel nunca recebe o
@@ -172,9 +212,39 @@ export class AdminService {
     if (pagarmeSecretKey?.trim() && !/^[•*]+$/.test(pagarmeSecretKey.trim())) config.pagarmeSecretKey = pagarmeSecretKey.trim();
     // Token da Conversions API: vazio ou mascarado = manter o gravado.
     if (metaCapiToken?.trim() && !/^[•*]+$/.test(metaCapiToken.trim())) config.metaCapiToken = metaCapiToken.trim();
+    // Webhooks MassFlow: vazio ou mascarado = manter a URL gravada.
+    if (!isUnchangedSecret(massflowWebhookUrl)) config.massflowWebhookUrl = this.webhookUrl(massflowWebhookUrl!);
+    if (!isUnchangedSecret(massflowCartWebhookUrl)) {
+      config.massflowCartWebhookUrl = this.webhookUrl(massflowCartWebhookUrl!);
+    }
 
     await this.configRepo.save(config);
     return this.getConfigForAdmin();
+  }
+
+  /** Só aceita https — a URL leva o token e os dados do cliente. */
+  private webhookUrl(raw: string): string {
+    const value = raw.trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new BadRequestException('URL do webhook do MassFlow inválida.');
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new BadRequestException('A URL do webhook do MassFlow precisa começar com https://');
+    }
+    return value;
+  }
+
+  /** Dispara um evento de teste no webhook gravado (eventos ou carrinho) e devolve a resposta. */
+  async testMassflow(body: { target?: string; name?: string; phone?: string; email?: string }) {
+    const target: MassflowTarget = body?.target === 'carrinho' ? 'carrinho' : 'eventos';
+    return this.massflowService.sendTest(target, {
+      name: body?.name,
+      phone: body?.phone,
+      email: body?.email,
+    });
   }
 
   /**

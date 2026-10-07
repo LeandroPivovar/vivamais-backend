@@ -629,6 +629,15 @@ export class BillingService {
           await this.confirmPaid(transaction, link, user);
         } else {
           await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(price));
+          void this.massflowService.notifyRenewal({
+            name: user.name,
+            phone: user.phone,
+            email: user.email,
+            plan: user.plan,
+            value: price,
+            transactionId: transaction.id,
+            paymentMethod: transaction.paymentMethod,
+          });
         }
       }
       return {
@@ -804,6 +813,15 @@ export class BillingService {
     } else if (paidNow) {
       // Renovação aprovada na hora: sem comissão, mas confirma o pagamento por e-mail.
       await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(price));
+      void this.massflowService.notifyRenewal({
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        plan: user.plan,
+        value: price,
+        transactionId: transaction.id,
+        paymentMethod: transaction.paymentMethod,
+      });
     }
 
     return {
@@ -1031,6 +1049,16 @@ export class BillingService {
       owner.plan,
       formatCurrency(Number(tx.value)),
     );
+    // Esteira de renovação no MassFlow (WhatsApp). Best-effort.
+    void this.massflowService.notifyRenewal({
+      name: owner.name,
+      phone: owner.phone,
+      email: owner.email,
+      plan: tx.plan,
+      value: Number(tx.value),
+      transactionId: tx.id,
+      paymentMethod: tx.paymentMethod,
+    });
     await this.notificationsService.notifySale({
       transactionId: tx.id,
       kind: 'renewal',

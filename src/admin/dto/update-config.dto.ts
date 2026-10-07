@@ -173,4 +173,15 @@ export class UpdateConfigDto {
   @IsOptional()
   @IsString()
   metaTestEventCode?: string;
+
+  // --- MassFlow ---
+  /** Vazio ou mascarado (••••) = manter a URL gravada. Ver AdminService.updateConfig. */
+  @IsOptional()
+  @IsString()
+  massflowWebhookUrl?: string;
+
+  /** Vazio ou mascarado (••••) = manter a URL gravada. */
+  @IsOptional()
+  @IsString()
+  massflowCartWebhookUrl?: string;
 }

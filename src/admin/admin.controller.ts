@@ -72,6 +72,12 @@ export class AdminController {
     return this.usersService.subscriptionStats();
   }
 
+  /** Envia um evento de teste ao webhook do MassFlow (target: 'eventos' | 'carrinho'). */
+  @Post('massflow/test')
+  testMassflow(@Body() body: { target?: string; name?: string; phone?: string; email?: string }) {
+    return this.adminService.testMassflow(body);
+  }
+
   /** Testa a conexão com o Clube Certo (login + lista de produtos da empresa). */
   @Get('clube-certo/test')
   testClubeCerto() {

@@ -5,6 +5,7 @@ import { Between, Not, Repository } from 'typeorm';
 import { Transaction } from '../billing/entities/transaction.entity';
 import { Ticket } from '../tickets/entities/ticket.entity';
 import { brDayWindow, formatBrDate } from '../common/br-date';
+import { MassflowService } from '../massflow/massflow.service';
 
 type SalePayload = {
   client?: string | null;
@@ -48,7 +49,17 @@ export class NotificationsService {
   constructor(
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
     @InjectRepository(Ticket) private ticketRepo: Repository<Ticket>,
+    private massflowService: MassflowService,
   ) {}
+
+  /**
+   * Espelha no webhook do MassFlow o aviso que foi para o grupo. Best-effort e sem
+   * await: o MassFlow lento ou fora do ar não pode segurar a notificação nem a request.
+   * Venda e renovação não passam por aqui — o billing manda com os dados do cliente.
+   */
+  private mirrorToMassflow(evento: string, message: string, dados: Record<string, unknown>) {
+    void this.massflowService.notifyEvent(evento, message, dados).catch(() => undefined);
+  }
 
   private get instanceId(): string {
     return process.env.ZAPI_INSTANCE_ID?.trim() ?? '';
@@ -155,18 +166,26 @@ export class NotificationsService {
   async notifyRefundOrCancel(payload: SalePayload & { reason?: string | null }) {
     const key = payload.transactionId ? `refund:${payload.transactionId}:${payload.reason ?? ''}` : `refund:${payload.client}:${payload.value}`;
     if (!this.once(key)) return;
-    await this.sendText(
-      [
-        '*REEMBOLSO/CANCELAMENTO*',
-        '',
-        `Cliente: ${payload.client ?? '-'}`,
-        `Plano: ${payload.plan ?? '-'}`,
-        `Valor: ${money(payload.value)}`,
-        `Metodo: ${payload.method ?? '-'}`,
-        `Gateway: ${payload.gateway ?? '-'}`,
-        `Motivo/status: ${payload.reason ?? '-'}`,
-      ].join('\n'),
-    );
+    const message = [
+      '*REEMBOLSO/CANCELAMENTO*',
+      '',
+      `Cliente: ${payload.client ?? '-'}`,
+      `Plano: ${payload.plan ?? '-'}`,
+      `Valor: ${money(payload.value)}`,
+      `Metodo: ${payload.method ?? '-'}`,
+      `Gateway: ${payload.gateway ?? '-'}`,
+      `Motivo/status: ${payload.reason ?? '-'}`,
+    ].join('\n');
+    await this.sendText(message);
+    this.mirrorToMassflow('reembolso_cancelamento', message, {
+      nome: payload.client ?? null,
+      plano: payload.plan ?? null,
+      valor: payload.value != null ? Number(payload.value) : null,
+      metodoPagamento: payload.method ?? null,
+      gateway: payload.gateway ?? null,
+      motivo: payload.reason ?? null,
+      transacaoId: payload.transactionId ?? null,
+    });
   }
 
   /** Pedido de saque de comissão — vai pro grupo de tecnologia/financeiro. */
@@ -179,66 +198,84 @@ export class NotificationsService {
     pixKeyTypeLabel?: string | null;
   }) {
     if (!this.once(`withdrawal:${payload.id}`)) return;
-    await this.sendText(
-      [
-        '*SAQUE SOLICITADO*',
-        '',
-        `Pedido: #${payload.id}`,
-        `Cliente: ${payload.client ?? '-'}`,
-        `CPF: ${payload.cpf ?? '-'}`,
-        `Valor: ${money(payload.value)}`,
-        `Chave PIX (${payload.pixKeyTypeLabel ?? '-'}): ${payload.pixKey ?? '-'}`,
-        '',
-        'Dar baixa no painel do admin (aba Saques).',
-      ].join('\n'),
-    );
+    const message = [
+      '*SAQUE SOLICITADO*',
+      '',
+      `Pedido: #${payload.id}`,
+      `Cliente: ${payload.client ?? '-'}`,
+      `CPF: ${payload.cpf ?? '-'}`,
+      `Valor: ${money(payload.value)}`,
+      `Chave PIX (${payload.pixKeyTypeLabel ?? '-'}): ${payload.pixKey ?? '-'}`,
+      '',
+      'Dar baixa no painel do admin (aba Saques).',
+    ].join('\n');
+    await this.sendText(message);
+    // CPF e chave PIX ficam só no grupo interno — não vão para a automação.
+    this.mirrorToMassflow('saque_solicitado', message.replace(/^(CPF|Chave PIX).*$/gm, ''), {
+      pedidoId: payload.id,
+      nome: payload.client ?? null,
+      valor: Number(payload.value),
+    });
   }
 
   async notifyTicketOpened(payload: TicketPayload) {
     if (!this.once(`ticket-open:${payload.id}`)) return;
-    await this.sendText(
-      [
-        '*SUPORTE ABERTO*',
-        '',
-        `Chamado: #${payload.id}`,
-        `Usuario: ${payload.user ?? '-'}`,
-        `Titulo: ${payload.title ?? '-'}`,
-        `Status: ${payload.status ?? '-'}`,
-      ].join('\n'),
-      this.supportPhones,
-    );
+    const message = [
+      '*SUPORTE ABERTO*',
+      '',
+      `Chamado: #${payload.id}`,
+      `Usuario: ${payload.user ?? '-'}`,
+      `Titulo: ${payload.title ?? '-'}`,
+      `Status: ${payload.status ?? '-'}`,
+    ].join('\n');
+    await this.sendText(message, this.supportPhones);
+    this.mirrorToMassflow('chamado_aberto', message, {
+      chamadoId: payload.id,
+      nome: payload.user ?? null,
+      titulo: payload.title ?? null,
+      status: payload.status ?? null,
+    });
   }
 
   async notifyTicketUpdated(payload: TicketPayload) {
-    await this.sendText(
-      [
-        '*CHAMADO ATUALIZADO*',
-        '',
-        `Chamado: #${payload.id}`,
-        `Usuario: ${payload.user ?? '-'}`,
-        `Titulo: ${payload.title ?? '-'}`,
-        `Acao: ${payload.action ?? 'Atualizacao'}`,
-        `Status: ${payload.status ?? '-'}`,
-      ].join('\n'),
-      this.supportPhones,
-    );
+    const message = [
+      '*CHAMADO ATUALIZADO*',
+      '',
+      `Chamado: #${payload.id}`,
+      `Usuario: ${payload.user ?? '-'}`,
+      `Titulo: ${payload.title ?? '-'}`,
+      `Acao: ${payload.action ?? 'Atualizacao'}`,
+      `Status: ${payload.status ?? '-'}`,
+    ].join('\n');
+    await this.sendText(message, this.supportPhones);
+    this.mirrorToMassflow('chamado_atualizado', message, {
+      chamadoId: payload.id,
+      nome: payload.user ?? null,
+      titulo: payload.title ?? null,
+      acao: payload.action ?? 'Atualizacao',
+      status: payload.status ?? null,
+    });
   }
 
   async notifyError(payload: ErrorPayload) {
     this.dailyErrorCount += 1;
     const key = `error:${payload.method ?? ''}:${payload.path ?? ''}:${payload.detail ?? payload.context}`;
     if (!this.once(key, 10 * 60 * 1000)) return;
-    await this.sendText(
-      [
-        '*ERRO NO SISTEMA*',
-        '',
-        `Contexto: ${payload.context}`,
-        payload.method || payload.path ? `Rota: ${payload.method ?? ''} ${payload.path ?? ''}`.trim() : null,
-        `Detalhe: ${payload.detail ?? '-'}`,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
+    const message = [
+      '*ERRO NO SISTEMA*',
+      '',
+      `Contexto: ${payload.context}`,
+      payload.method || payload.path ? `Rota: ${payload.method ?? ''} ${payload.path ?? ''}`.trim() : null,
+      `Detalhe: ${payload.detail ?? '-'}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    await this.sendText(message);
+    this.mirrorToMassflow('erro_sistema', message, {
+      contexto: payload.context,
+      rota: payload.method || payload.path ? `${payload.method ?? ''} ${payload.path ?? ''}`.trim() : null,
+      detalhe: payload.detail ?? null,
+    });
   }
 
   @Cron('55 23 * * *', { timeZone: 'America/Sao_Paulo' })
@@ -258,21 +295,33 @@ export class NotificationsService {
     const pix = paid.filter((tx) => `${tx.paymentMethod} ${tx.gatewayProvider}`.toLowerCase().includes('pix') || tx.gatewayProvider === 'woovi');
     const card = paid.filter((tx) => `${tx.paymentMethod} ${tx.gatewayProvider}`.toLowerCase().includes('cart') || tx.gatewayProvider === 'pagarme');
 
-    await this.sendText(
-      [
-        '*RELATORIO DIARIO - VIVA MAIS*',
-        '',
-        `Periodo: ${formatBrDate(start)}`,
-        `Vendas pagas: ${paid.length}`,
-        `Faturamento: ${money(gross)}`,
-        `Pix: ${pix.length} venda(s) / ${money(pix.reduce((sum, tx) => sum + Number(tx.value), 0))}`,
-        `Cartao: ${card.length} venda(s) / ${money(card.reduce((sum, tx) => sum + Number(tx.value), 0))}`,
-        `Cancelamentos/reembolsos: ${canceled.length}`,
-        `Suportes abertos: ${ticketsOpened}`,
-        `Chamados atualizados: ${ticketsUpdated}`,
-        `Erros 500: ${this.dailyErrorCount}`,
-      ].join('\n'),
-    );
+    const pixTotal = pix.reduce((sum, tx) => sum + Number(tx.value), 0);
+    const cardTotal = card.reduce((sum, tx) => sum + Number(tx.value), 0);
+    const message = [
+      '*RELATORIO DIARIO - VIVA MAIS*',
+      '',
+      `Periodo: ${formatBrDate(start)}`,
+      `Vendas pagas: ${paid.length}`,
+      `Faturamento: ${money(gross)}`,
+      `Pix: ${pix.length} venda(s) / ${money(pixTotal)}`,
+      `Cartao: ${card.length} venda(s) / ${money(cardTotal)}`,
+      `Cancelamentos/reembolsos: ${canceled.length}`,
+      `Suportes abertos: ${ticketsOpened}`,
+      `Chamados atualizados: ${ticketsUpdated}`,
+      `Erros 500: ${this.dailyErrorCount}`,
+    ].join('\n');
+    await this.sendText(message);
+    this.mirrorToMassflow('relatorio_diario', message, {
+      periodo: formatBrDate(start),
+      vendasPagas: paid.length,
+      faturamento: Number(gross.toFixed(2)),
+      pix: { quantidade: pix.length, valor: Number(pixTotal.toFixed(2)) },
+      cartao: { quantidade: card.length, valor: Number(cardTotal.toFixed(2)) },
+      cancelamentos: canceled.length,
+      suportesAbertos: ticketsOpened,
+      chamadosAtualizados: ticketsUpdated,
+      erros500: this.dailyErrorCount,
+    });
     this.dailyErrorCount = 0;
   }
 }
