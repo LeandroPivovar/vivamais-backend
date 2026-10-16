@@ -16,6 +16,8 @@ import { ageGroup } from '../common/age';
 import { brDateKey, formatBrDate } from '../common/br-date';
 import { publicUrl } from '../common/public-url';
 import { MassflowService, MassflowTarget, maskWebhookUrl } from '../massflow/massflow.service';
+import { WooviService } from '../payment/woovi.service';
+import { PagarmeService } from '../payment/pagarme.service';
 
 /** Senha temporária legível (sem caracteres ambíguos como O/0, l/1). */
 function generatePassword(length = 8): string {
@@ -37,7 +39,7 @@ export type AdminConfigResponse = Omit<
   | 'clubeCertoPassword'
   | 'wooviAppId'
   | 'pagarmeSecretKey'
-  | 'metaCapiToken'
+  | 'tiktokEventsToken'
   | 'massflowWebhookUrl'
   | 'massflowCartWebhookUrl'
 > & {
@@ -48,8 +50,8 @@ export type AdminConfigResponse = Omit<
   wooviAppIdLast4: string | null;
   pagarmeSecretKeySet: boolean;
   pagarmeSecretKeyLast4: string | null;
-  metaCapiTokenSet: boolean;
-  metaCapiTokenLast4: string | null;
+  tiktokEventsTokenSet: boolean;
+  tiktokEventsTokenLast4: string | null;
   /** URL efetiva (painel ou .env), mascarada: host + 4 últimos caracteres. */
   massflowWebhookUrlPreview: string | null;
   massflowWebhookUrlSource: 'painel' | 'env' | null;
@@ -73,6 +75,8 @@ export class AdminService {
     private clubeCertoService: ClubeCertoService,
     private mailService: MailService,
     private massflowService: MassflowService,
+    private wooviService: WooviService,
+    private pagarmeService: PagarmeService,
   ) {}
 
   /** Config crua — uso interno (preços, gateway). Contém a chave secreta em texto puro. */
@@ -89,7 +93,7 @@ export class AdminService {
       clubeCertoPassword,
       wooviAppId,
       pagarmeSecretKey,
-      metaCapiToken,
+      tiktokEventsToken,
       massflowWebhookUrl,
       massflowCartWebhookUrl,
       ...safe
@@ -108,8 +112,8 @@ export class AdminService {
       wooviAppIdLast4: wooviAppId ? wooviAppId.slice(-4) : null,
       pagarmeSecretKeySet: !!pagarmeSecretKey,
       pagarmeSecretKeyLast4: pagarmeSecretKey ? pagarmeSecretKey.slice(-4) : null,
-      metaCapiTokenSet: !!metaCapiToken,
-      metaCapiTokenLast4: metaCapiToken ? metaCapiToken.slice(-4) : null,
+      tiktokEventsTokenSet: !!tiktokEventsToken,
+      tiktokEventsTokenLast4: tiktokEventsToken ? tiktokEventsToken.slice(-4) : null,
     };
   }
 
@@ -195,7 +199,7 @@ export class AdminService {
       clubeCertoPassword,
       wooviAppId,
       pagarmeSecretKey,
-      metaCapiToken,
+      tiktokEventsToken,
       massflowWebhookUrl,
       massflowCartWebhookUrl,
       ...rest
@@ -210,8 +214,8 @@ export class AdminService {
     if (wooviAppId?.trim() && !/^[•*]+$/.test(wooviAppId.trim())) config.wooviAppId = wooviAppId.trim();
     // Secret key Pagar.me: vazio ou mascarado = manter a gravada.
     if (pagarmeSecretKey?.trim() && !/^[•*]+$/.test(pagarmeSecretKey.trim())) config.pagarmeSecretKey = pagarmeSecretKey.trim();
-    // Token da Conversions API: vazio ou mascarado = manter o gravado.
-    if (metaCapiToken?.trim() && !/^[•*]+$/.test(metaCapiToken.trim())) config.metaCapiToken = metaCapiToken.trim();
+    // Token da Events API: vazio ou mascarado = manter o gravado.
+    if (tiktokEventsToken?.trim() && !/^[•*]+$/.test(tiktokEventsToken.trim())) config.tiktokEventsToken = tiktokEventsToken.trim();
     // Webhooks MassFlow: vazio ou mascarado = manter a URL gravada.
     if (!isUnchangedSecret(massflowWebhookUrl)) config.massflowWebhookUrl = this.webhookUrl(massflowWebhookUrl!);
     if (!isUnchangedSecret(massflowCartWebhookUrl)) {
@@ -296,4 +300,37 @@ export class AdminService {
       commissionMmn: Number(tx.commissionMmn),
     }));
   }
+
+  async toggleUserSubscription(userId: number, activate: boolean) {
+    const user = await this.usersService.findById(userId);
+    if (activate) {
+      await this.usersService.update(userId, {
+        status: "ativo",
+        access: { health: true, clube: true, pet: true, funeral: user.accessFuneral },
+      });
+    } else {
+      await this.usersService.update(userId, {
+        status: "inativo",
+        access: { health: false, clube: false, pet: false, funeral: false },
+      });
+
+      const txs = await this.txRepo.find({ where: { userId } });
+      for (const tx of txs) {
+        if (tx.status === "cancelado" || tx.status === "duplicado") continue;
+        if (tx.gatewayProvider === "woovi") {
+          const subId = tx.gatewaySubscriptionId || tx.gatewayIdentifier;
+          if (subId) {
+            try { await this.wooviService.cancelSubscription(subId); } catch {}
+          }
+        } else if (tx.gatewayProvider === "pagarme" && tx.gatewaySubscriptionId) {
+          try { await this.pagarmeService.cancelSubscription(tx.gatewaySubscriptionId); } catch {}
+        }
+        if (tx.status === "pendente") {
+          await this.txRepo.update(tx.id, { status: "cancelado", pixCode: null });
+        }
+      }
+    }
+    return this.usersService.toAdminResponse(await this.usersService.findById(userId));
+  }
+
 }

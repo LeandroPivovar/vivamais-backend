@@ -48,6 +48,10 @@ export class Transaction {
   @Column({ type: 'datetime', nullable: true })
   cartWebhookAt: Date | null;
 
+  /** TikTok custom AbandonedCart: delivery marker independent of MassFlow. */
+  @Column({ type: 'datetime', nullable: true })
+  tiktokCartEventAt: Date | null;
+
   // --- Rastreio no gateway ---
   // Qual gateway processou este lançamento: 'veenca' | 'woovi'.
   @Column({ type: 'varchar', length: 20, default: 'veenca' })

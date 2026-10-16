@@ -176,6 +176,51 @@ export class WooviService {
     }
   }
 
+  /** Consulta exata: confirma a identidade e o valor da assinatura. */
+  async getSubscriptionForPayment(id: string): Promise<{
+    valueCents: number; subStatus: string; pixRecStatus: string;
+  } | null> {
+    const cfg = await this.getConfig();
+    if (!cfg?.wooviEnabled || !cfg?.wooviAppId || !id) return null;
+    try {
+      const res = await fetch(`${this.baseUrl(cfg)}/subscriptions/${encodeURIComponent(id)}`, {
+        headers: this.headers(cfg), signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const sub = data?.subscription;
+      if (!sub || (sub.globalID !== id && sub.correlationID !== id)) return null;
+      const valueCents = Number(sub.value);
+      if (!Number.isSafeInteger(valueCents) || valueCents <= 0) return null;
+      return {
+        valueCents,
+        subStatus: String(sub.status ?? '').toUpperCase(),
+        pixRecStatus: String((sub.pixRecurring ?? sub.pixRecurringOptions)?.status ?? '').toUpperCase(),
+      };
+    } catch {
+      this.logger.warn('Não foi possível verificar a assinatura Pix Automático.');
+      return null;
+    }
+  }
+
+  /** Confirma o cancelamento no gateway antes de permitir outra autorização. */
+  async cancelPendingSubscription(id: string): Promise<boolean> {
+    const cfg = await this.getConfig();
+    if (!cfg?.wooviEnabled || !cfg?.wooviAppId || !id) return false;
+    try {
+      const res = await fetch(`${this.baseUrl(cfg)}/subscriptions/${encodeURIComponent(id)}/cancel`, {
+        method: 'PUT', headers: this.headers(cfg), signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) return false;
+      const state = await this.getSubscriptionForPayment(id);
+      return !!state && (['CANCELED', 'CANCELLED', 'EXPIRED'].includes(state.subStatus)
+        || ['CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(state.pixRecStatus));
+    } catch {
+      this.logger.warn('Não foi possível confirmar o cancelamento do Pix Automático.');
+      return false;
+    }
+  }
+
   /**
    * Consulta a assinatura pelo nosso correlationID — fonte de verdade do status
    * (usada pela reconciliação e pela revalidação do webhook). Devolve o estado da
@@ -190,15 +235,15 @@ export class WooviService {
     const cfg = await this.getConfig();
     if (!cfg?.wooviEnabled || !cfg?.wooviAppId) return null;
     try {
-      const url = `${this.baseUrl(cfg)}/subscriptions?correlationID=${encodeURIComponent(correlationID)}`;
-      const res = await fetch(url, { headers: this.headers(cfg) });
+      const url = `${this.baseUrl(cfg)}/subscriptions/${encodeURIComponent(correlationID)}`;
+      const res = await fetch(url, { headers: this.headers(cfg), signal: AbortSignal.timeout(15000) });
       if (!res.ok) {
         this.logger.warn(`Consulta assinatura Woovi ${correlationID} falhou: HTTP ${res.status}`);
         return null;
       }
       const data: any = await res.json().catch(() => null);
-      const sub = Array.isArray(data?.subscriptions) ? data.subscriptions[0] : (data?.subscription ?? null);
-      if (!sub) return null;
+      const sub = data?.subscription;
+      if (!sub || (sub.correlationID !== correlationID && sub.globalID !== correlationID)) return null;
       const pixRec = sub.pixRecurring ?? sub.pixRecurringOptions ?? {};
       return {
         subscriptionId: sub.globalID,
@@ -211,4 +256,9 @@ export class WooviService {
       return null;
     }
   }
+
+  async cancelSubscription(id: string): Promise<boolean> {
+    return this.cancelPendingSubscription(id);
+  }
+
 }

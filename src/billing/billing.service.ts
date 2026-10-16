@@ -67,6 +67,7 @@ function compactDateKey(date = new Date()): string {
 @Injectable()
 export class BillingService {
   private readonly logger = new Logger(BillingService.name);
+  private readonly pixPaymentRequests = new Map<number, Promise<any>>();
   private readonly webhookDedupe = new Map<string, number>();
   private reconciling = false;
   private reconcilingPagarme = false;
@@ -74,6 +75,7 @@ export class BillingService {
   private reconcilingPaidAccess = false;
   private retryingTelemed = false;
   private notifyingCarts = false;
+  private notifyingTikTokCarts = false;
 
   constructor(
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
@@ -273,44 +275,96 @@ export class BillingService {
       if (!link) throw new BadRequestException('Link de indicação inválido para o plano selecionado.');
     }
 
-    const existing = await this.usersRepo.findOne({ where: [{ email: dto.email }, { cpf: dto.cpf }] });
-    if (existing) throw new BadRequestException('Já existe uma conta com esse e-mail ou CPF.');
+    const cleanCpf = (dto.cpf || "").replace(/\D/g, "");
+    const cleanEmail = (dto.email || "").trim().toLowerCase();
+
+    const existing = await this.usersRepo.findOne({
+      where: [
+        { email: cleanEmail },
+        { email: dto.email.trim() },
+        { cpf: cleanCpf },
+        { cpf: dto.cpf },
+      ],
+    });
+
+    const isNewUser = !existing;
+    let savedUser: User;
+    const initialPassword = dto.password?.trim() || generatePassword();
+    const passwordHash = await bcrypt.hash(initialPassword, 10);
+
+    if (existing) {
+      const paidTxCount = await this.txRepo.count({
+        where: { userId: existing.id, status: "pago" },
+      });
+      if (paidTxCount > 0 || existing.status === "ativo") {
+        throw new BadRequestException("Já existe uma conta ativa com este e-mail ou CPF. Acesse seu painel para gerenciar sua assinatura.");
+      }
+
+      existing.plan = dto.planType as User["plan"];
+      existing.name = dto.name;
+      existing.email = cleanEmail;
+      existing.cpf = cleanCpf;
+      existing.phone = dto.phone;
+      existing.birthDate = dto.birthDate;
+      existing.gender = dto.gender as User["gender"];
+      existing.address = dto.address;
+      existing.neighborhood = dto.neighborhood;
+      existing.complement = dto.complement ?? null;
+      existing.city = dto.city;
+      existing.state = dto.state;
+      existing.zipCode = dto.zipCode;
+      if (link) existing.referredById = link.userId;
+      if (dto.password?.trim()) {
+        existing.passwordHash = passwordHash;
+      }
+      savedUser = await this.usersRepo.save(existing);
+
+      const oldPending = await this.txRepo.find({
+        where: { userId: savedUser.id, status: "pendente" },
+      });
+      for (const pTx of oldPending) {
+        if (pTx.gatewayProvider === "woovi") {
+          const subId = pTx.gatewaySubscriptionId || pTx.gatewayIdentifier;
+          if (subId) {
+            try { await this.wooviService.cancelPendingSubscription(subId); } catch {}
+          }
+        } else if (pTx.gatewayProvider === "pagarme" && pTx.gatewaySubscriptionId) {
+          try { await this.pagarmeService.cancelSubscription(pTx.gatewaySubscriptionId); } catch {}
+        }
+        await this.txRepo.update(pTx.id, { status: "cancelado", pixCode: null });
+      }
+    } else {
+      const newUser = this.usersRepo.create({
+        name: dto.name,
+        email: cleanEmail,
+        cpf: cleanCpf,
+        phone: dto.phone,
+        birthDate: dto.birthDate,
+        gender: dto.gender as User["gender"],
+        address: dto.address,
+        neighborhood: dto.neighborhood,
+        complement: dto.complement ?? null,
+        city: dto.city,
+        state: dto.state,
+        zipCode: dto.zipCode,
+        passwordHash,
+        plan: dto.planType as User["plan"],
+        level: "1\u00ba N\u00edvel" as User["level"],
+        referredById: link ? link.userId : null,
+        status: "pendente",
+      });
+      savedUser = await this.usersRepo.save(newUser);
+    }
 
     const config = await this.configRepo.findOne({ where: {} });
-    if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
+    if (!config) throw new NotFoundException("Configuração do sistema não encontrada.");
 
     const price = basePriceForPlan(dto.planType, config);
-
-    // Senha inicial do indicado: gerada legível e enviada por e-mail após criar a conta.
-    const initialPassword = generatePassword();
-
-    const newUser = this.usersRepo.create({
-      name: dto.name,
-      email: dto.email,
-      cpf: dto.cpf,
-      phone: dto.phone,
-      birthDate: dto.birthDate,
-      gender: dto.gender as User['gender'],
-      address: dto.address,
-      neighborhood: dto.neighborhood,
-      complement: dto.complement ?? null,
-      city: dto.city,
-      state: dto.state,
-      zipCode: dto.zipCode,
-      passwordHash: await bcrypt.hash(initialPassword, 10),
-      plan: dto.planType as User['plan'],
-      level: '1º Nível',
-      referredById: link ? link.userId : null,
-      // Nasce pendente: só vira 'ativo' quando o pagamento é confirmado (confirmPaid).
-      // Enquanto pendente, não gera comissão pra rede do indicador.
-      status: 'pendente',
-    });
-    const savedUser = await this.usersRepo.save(newUser);
 
     // ---- Fluxo Cartão de Crédito (Pagar.me) — vale p/ qualquer gateway PIX ativo ----
     if (dto.paymentMethod === 'card' && (await this.pagarmeService.isEnabled())) {
       if (!dto.cardToken) {
-        await this.usersRepo.remove(savedUser);
+        if (isNewUser) await this.usersRepo.remove(savedUser);
         throw new BadRequestException('Não foi possível ler os dados do cartão. Tente novamente.');
       }
       const code = `vm-${savedUser.id}-${Date.now()}`;
@@ -346,7 +400,7 @@ export class BillingService {
       });
       if (!result.ok || !result.subscriptionId) {
         await this.txRepo.remove(transaction);
-        await this.usersRepo.remove(savedUser);
+        if (isNewUser) await this.usersRepo.remove(savedUser);
         {
           const errInfo = {
             context: 'Checkout — assinatura no cartão (Pagar.me)',
@@ -365,7 +419,7 @@ export class BillingService {
       const st = await this.pagarmeService.getLatestChargeStatus(result.subscriptionId);
       if (st === 'failed') {
         await this.txRepo.remove(transaction);
-        await this.usersRepo.remove(savedUser);
+        if (isNewUser) await this.usersRepo.remove(savedUser);
         throw new BadRequestException('Pagamento recusado pela operadora do cartão.');
       }
       await this.mailService.sendWelcomePassword(savedUser.email, savedUser.name, initialPassword);
@@ -387,7 +441,7 @@ export class BillingService {
     if (config.activeGateway === 'woovi' && dto.paymentMethod !== 'card' && (await this.wooviService.isEnabled())) {
       const phone = formatBrazilPhone(dto.phone);
       if (!phone) {
-        await this.usersRepo.remove(savedUser);
+        if (isNewUser) await this.usersRepo.remove(savedUser);
         throw new BadRequestException('Telefone inválido. Informe um número com DDD (ex.: 41999887766).');
       }
       const correlationID = `vm-${savedUser.id}-${Date.now()}`;
@@ -413,7 +467,7 @@ export class BillingService {
 
       if (!result.ok || !result.emv) {
         await this.txRepo.remove(transaction);
-        await this.usersRepo.remove(savedUser);
+        if (isNewUser) await this.usersRepo.remove(savedUser);
         {
           const errInfo = {
             context: 'Checkout — Pix Automático (Woovi)',
@@ -469,7 +523,7 @@ export class BillingService {
     // ---- Fluxo real (gateway Veenca) ----
     const phone = formatBrazilPhone(dto.phone);
     if (!phone) {
-      await this.usersRepo.remove(savedUser);
+      if (isNewUser) await this.usersRepo.remove(savedUser);
       throw new BadRequestException('Telefone inválido. Informe um número com DDD (ex.: 41999887766).');
     }
 
@@ -516,7 +570,7 @@ export class BillingService {
     if (!result.ok) {
       // desfaz o usuário órfão pra permitir nova tentativa com o mesmo e-mail/CPF
       await this.txRepo.remove(transaction);
-      await this.usersRepo.remove(savedUser);
+      if (isNewUser) await this.usersRepo.remove(savedUser);
       throw new BadRequestException(result.error || 'Não foi possível processar o pagamento.');
     }
 
@@ -558,7 +612,62 @@ export class BillingService {
    * mas NÃO credita comissão de indicação nem re-cadastra na Vencca — o identificador
    * `vm-renew-` sinaliza isso também no webhook.
    */
+  private async prepareCurrentPixSubscription(userId: number, plan: string, price: number): Promise<Transaction | null> {
+    const expectedCents = Math.round(price * 100);
+    const rows = await this.txRepo.find({ where: { userId, gatewayProvider: 'woovi' }, order: { createdAt: 'DESC' } });
+    const seen = new Set<string>();
+    let reusable: Transaction | null = null;
+    for (const tx of rows) {
+      const matches = tx.plan === plan && Math.round(Number(tx.value) * 100) === expectedCents;
+      if (['cancelado', 'duplicado'].includes(tx.status)) continue;
+      if (tx.status !== 'pendente' && matches) continue;
+      const id = tx.gatewaySubscriptionId || tx.gatewayIdentifier;
+      if (!id) {
+        if (tx.status === 'pendente') throw new BadRequestException('Não foi possível identificar o PIX anterior. Entre em contato com o suporte.');
+        continue;
+      }
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const state = await this.wooviService.getSubscriptionForPayment(id);
+      if (!state) throw new BadRequestException('Não foi possível conferir o PIX anterior. Tente novamente em instantes.');
+      const closed = ['CANCELED', 'CANCELLED', 'EXPIRED'].includes(state.subStatus)
+        || ['CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(state.pixRecStatus);
+      if (closed) {
+        if (tx.status === 'pendente') await this.txRepo.update(tx.id, { status: 'cancelado', pixCode: null });
+        continue;
+      }
+      const samePrice = matches && state.valueCents === expectedCents;
+      const fresh = tx.createdAt.getTime() > Date.now() - 3 * 24 * 60 * 60 * 1000;
+      if (samePrice && tx.status === 'pendente' && tx.pixCode && fresh
+          && ['CREATED', 'APPROVED'].includes(state.pixRecStatus)) {
+        reusable ??= tx;
+        continue;
+      }
+      if (state.pixRecStatus === 'APPROVED' || tx.status !== 'pendente') {
+        throw new BadRequestException('Já existe um PIX Automático autorizado para esta conta. A recorrência anterior precisa ser ajustada pelo suporte antes de gerar uma nova autorização.');
+      }
+      if (state.pixRecStatus !== 'CREATED') {
+        throw new BadRequestException('O PIX anterior está em atualização. Tente novamente em instantes.');
+      }
+      if (!(await this.wooviService.cancelPendingSubscription(id))) {
+        throw new BadRequestException('Não foi possível cancelar o PIX anterior. Nenhum novo QR Code foi gerado. Tente novamente em instantes.');
+      }
+      await this.txRepo.update(tx.id, { status: 'cancelado', pixCode: null });
+    }
+    return reusable;
+  }
+
   async payCurrentSubscription(userId: number, dto: PayDto, clientIp?: string) {
+    if (dto.paymentMethod !== 'pix') return this.payCurrentSubscriptionOnce(userId, dto, clientIp);
+    const running = this.pixPaymentRequests.get(userId);
+    if (running) return running;
+    const request = this.payCurrentSubscriptionOnce(userId, dto, clientIp);
+    this.pixPaymentRequests.set(userId, request);
+    try { return await request; }
+    finally { this.pixPaymentRequests.delete(userId); }
+  }
+
+  private async payCurrentSubscriptionOnce(userId: number, dto: PayDto, clientIp?: string) {
     if (!(await this.paymentService.isEnabled())) {
       // Woovi pode estar ativo mesmo com a Veenca desligada — checado abaixo.
       const cfgEarly = await this.configRepo.findOne({ where: {} });
@@ -658,18 +767,14 @@ export class BillingService {
       }
       const wprice = basePriceForPlan(user.plan, config);
 
-      // Reuso: assinatura Pix Automático pendente recente devolve o mesmo QR de autorização.
-      const wfresh = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-      const wexisting = await this.txRepo.findOne({
-        where: { userId, status: 'pendente', gatewayProvider: 'woovi', pixCode: Not(IsNull()), createdAt: MoreThan(wfresh) },
-        order: { createdAt: 'DESC' },
-      });
+      const wexisting = await this.prepareCurrentPixSubscription(userId, user.plan, wprice);
       if (wexisting?.pixCode) {
         return {
           success: true,
           transactionId: String(wexisting.id),
           status: 'pending' as const,
-          value: formatCurrency(wprice),
+          plan: wexisting.plan,
+          value: formatCurrency(Number(wexisting.value)),
           pixCode: wexisting.pixCode,
           pixImage: null,
         };
@@ -706,7 +811,8 @@ export class BillingService {
         success: true,
         transactionId: String(wtx.id),
         status: 'pending' as const,
-        value: formatCurrency(wprice),
+        plan: wtx.plan,
+        value: formatCurrency(Number(wtx.value)),
         pixCode: wresult.emv,
         pixImage: null,
       };
@@ -1005,6 +1111,7 @@ export class BillingService {
   private async ensurePaidAccess(tx: Transaction): Promise<boolean> {
     if (tx.status !== 'pago') return false;
     const user = await this.usersService.findById(tx.userId);
+    if (user.status === 'inativo') return false;
     const missingAccess = user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet;
 
     if (missingAccess) {
@@ -1614,6 +1721,7 @@ export class BillingService {
         .innerJoin('tx.user', 'user')
         .where('tx.status = :paid', { paid: 'pago' })
         .andWhere('tx.createdAt > :since', { since })
+        .andWhere('user.status <> :inativo', { inativo: 'inativo' })
         .andWhere('(user.status <> :active OR user.accessHealth = false OR user.accessClube = false OR user.accessPet = false)', {
           active: 'ativo',
         })
@@ -1717,6 +1825,43 @@ export class BillingService {
    * (cartWebhookAt trava o reenvio) e só depois de conferir que a conta não ficou
    * ativa nesse meio-tempo — pagamento confirmado não é carrinho abandonado.
    */
+  /** New pending charges only: custom TikTok event after five unpaid minutes. */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async notifyTikTokAbandonedCarts() {
+    if (this.notifyingTikTokCarts) return;
+    this.notifyingTikTokCarts = true;
+    try {
+      if (!(await this.metaCapiService.isEnabled())) return;
+      const cutoff = new Date(Date.now() - CART_ABANDON_MINUTES * 60000);
+      const pending = await this.txRepo.find({
+        where: { status: 'pendente', tiktokCartEventAt: IsNull(), createdAt: LessThan(cutoff) },
+        order: { createdAt: 'ASC' }, take: 50,
+      });
+      for (const tx of pending) {
+        try {
+          const user = await this.usersService.findById(tx.userId);
+          // Read the status again immediately before sending; avoid stale candidates.
+          const current = await this.txRepo.findOne({ where: { id: tx.id } });
+          if (!current || current.status !== 'pendente' || current.tiktokCartEventAt) continue;
+          if (user.status === 'ativo') {
+            await this.txRepo.update(tx.id, { tiktokCartEventAt: new Date() });
+            continue;
+          }
+          const sent = await this.metaCapiService.trackAbandonedCart({
+            transactionId: tx.id, value: Number(tx.value), planName: tx.plan,
+            email: user.email, phone: user.phone,
+          });
+          // Failed sends remain eligible; a stable event ID allows TikTok deduplication.
+          if (sent) await this.txRepo.update(tx.id, { tiktokCartEventAt: new Date() });
+        } catch (err) {
+          this.logger.warn(`TikTok carrinho falhou (tx ${tx.id}): ${(err as Error).message}`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Rotina TikTok carrinho falhou: ${(err as Error).message}`);
+    } finally { this.notifyingTikTokCarts = false; }
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async notifyAbandonedCarts() {
     if (this.notifyingCarts) return;

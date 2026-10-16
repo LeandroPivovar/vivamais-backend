@@ -6,11 +6,12 @@ import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
 import { UsersModule } from '../users/users.module';
 import { VenccaModule } from '../vencca/vencca.module';
 import { ClubeCertoModule } from '../clube-certo/clube-certo.module';
+import { PaymentModule } from '../payment/payment.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AppConfig, Transaction, TrialSignupLink]), UsersModule, VenccaModule, ClubeCertoModule],
+  imports: [TypeOrmModule.forFeature([AppConfig, Transaction, TrialSignupLink]), UsersModule, VenccaModule, ClubeCertoModule, PaymentModule],
   controllers: [AdminController],
   providers: [AdminService],
 })

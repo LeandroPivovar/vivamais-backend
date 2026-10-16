@@ -156,23 +156,23 @@ export class UpdateConfigDto {
   @IsString()
   clubeCertoCompanyId?: string;
 
-  // --- Meta (Facebook) — Conversions API ---
+  // --- TikTok — Events API ---
   @IsOptional()
   @IsBoolean()
-  metaCapiEnabled?: boolean;
+  tiktokEventsEnabled?: boolean;
 
   @IsOptional()
   @IsString()
-  metaPixelId?: string;
+  tiktokPixelId?: string;
 
   /** Vazio ou mascarado (••••) = manter o token gravado. Ver AdminService.updateConfig. */
   @IsOptional()
   @IsString()
-  metaCapiToken?: string;
+  tiktokEventsToken?: string;
 
   @IsOptional()
   @IsString()
-  metaTestEventCode?: string;
+  tiktokTestEventCode?: string;
 
   // --- MassFlow ---
   /** Vazio ou mascarado (••••) = manter a URL gravada. Ver AdminService.updateConfig. */

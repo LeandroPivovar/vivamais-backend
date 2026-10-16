@@ -37,8 +37,20 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    const raw = (dto.username || "").trim();
+    const digits = raw.replace(/\D/g, "");
+    const whereConditions: any[] = [
+      { email: raw.toLowerCase() },
+      { email: raw },
+      { cpf: raw },
+    ];
+    if (digits.length === 11) {
+      whereConditions.push({ cpf: digits });
+    } else if (digits.length === 10) {
+      whereConditions.push({ cpf: digits.padStart(11, '0') });
+    }
     let user = await this.usersRepo.findOne({
-      where: [{ email: dto.username }, { cpf: dto.username }],
+      where: whereConditions,
     });
     if (!user) throw new UnauthorizedException('Credenciais inválidas.');
 
@@ -71,7 +83,13 @@ export class AuthService {
    * não dá acesso a financeiro, dependentes, admin ou qualquer outra área da conta.
    */
   async loginKidsTeen(dto: CpfLoginDto) {
-    const user = await this.usersRepo.findOne({ where: { cpf: dto.cpf }, relations: ['holder'] });
+    const digits = (dto.cpf || "").replace(/\D/g, "");
+    const targets = [{ cpf: digits }, { cpf: dto.cpf }];
+    if (digits.length === 10) targets.push({ cpf: digits.padStart(11, '0') });
+    const user = await this.usersRepo.findOne({
+      where: targets,
+      relations: ['holder'],
+    });
     if (!user) throw new UnauthorizedException('CPF não encontrado.');
 
     // Só dependente entra no Kids/Teen -- titular não usa o próprio CPF aqui.

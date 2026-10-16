@@ -213,4 +213,28 @@ export class PagarmeService {
     const code = data?.code ?? data?.subscription?.code;
     return { subscriptionId, code, type };
   }
+
+  async cancelSubscription(subscriptionId: string): Promise<boolean> {
+    const cfg = await this.getConfig();
+    if (!cfg?.pagarmeSecretKey || !subscriptionId) return false;
+    try {
+      const res = await fetch(`${BASE}/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+        method: "DELETE",
+        headers: { Authorization: this.authHeader(cfg) },
+      });
+      if (!res.ok) {
+        const patchRes = await fetch(`${BASE}/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: this.authHeader(cfg) },
+          body: JSON.stringify({ cancel_pending_invoices: true }),
+        });
+        return patchRes.ok;
+      }
+      return true;
+    } catch (err) {
+      this.logger.warn(`Cancelamento assinatura Pagar.me ${subscriptionId} falhou: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
 }

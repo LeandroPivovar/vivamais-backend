@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { IsCpf } from '../../common/cpf';
 import { IsBirthDate, normalizeBirthDate } from '../../common/birth-date';
 import { Transform } from 'class-transformer';
@@ -15,6 +15,11 @@ export class CheckoutDto {
 
   @IsEmail()
   email: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6, { message: "A senha deve ter no m?nimo 6 caracteres." })
+  password?: string;
 
   // Normaliza para 11 dígitos (tira pontos/traço/espaços) e valida — evita CPF
   // formatado/inválido chegar no banco e nas integrações (Woovi/Vencca).

@@ -40,6 +40,14 @@ export class AdminController {
     return this.adminService.regeneratePassword(id);
   }
 
+  @Put('users/:id/subscription')
+  toggleSubscription(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { active: boolean },
+  ) {
+    return this.adminService.toggleUserSubscription(id, !!body.active);
+  }
+
   @Post('trial-links')
   createTrialSignupLink(@CurrentUser() authUser: { id: number }, @Body() body: { plan?: string }) {
     return this.adminService.createTrialSignupLink(body?.plan ?? '', authUser.id);

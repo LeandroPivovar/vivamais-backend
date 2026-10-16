@@ -123,25 +123,25 @@ export class AppConfig {
   @Column({ type: 'varchar', length: 40, nullable: true })
   clubeCertoCompanyId: string | null;
 
-  // --- Meta (Facebook) — Conversions API ---
-  // Sem isto ligado a venda por PIX nunca chega na Meta: o pixel do navegador só
+  // --- TikTok — Events API ---
+  // Sem isto ligado a venda por PIX nunca chega no TikTok: o pixel do navegador só
   // dispara no cartão (o PIX confirma no webhook, com o cliente já fora da tela).
   @Column({ type: 'boolean', default: false })
-  metaCapiEnabled: boolean;
+  tiktokEventsEnabled: boolean;
 
   // ID do pixel. Precisa ser o MESMO que está no index.html do frontend, senão a
   // Meta não deduplica o Purchase do navegador com o do servidor.
   @Column({ type: 'varchar', length: 64, nullable: true })
-  metaPixelId: string | null;
+  tiktokPixelId: string | null;
 
-  // Token da Conversions API — segredo, mascarado na API do admin.
+  // Token da Events API — segredo, mascarado na API do admin.
   @Column({ type: 'text', nullable: true })
-  metaCapiToken: string | null;
+  tiktokEventsToken: string | null;
 
   // Código do Test Events do Gerenciador. Preenchido = os eventos vão para o teste
   // em vez da atribuição real. Deixe vazio em produção.
   @Column({ type: 'varchar', length: 40, nullable: true })
-  metaTestEventCode: string | null;
+  tiktokTestEventCode: string | null;
 
   // --- MassFlow (automação de WhatsApp) ---
   // As URLs carregam o token no path — tratadas como segredo, mascaradas na API do admin.
