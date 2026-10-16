@@ -833,15 +833,24 @@ export class BillingService {
         where: { userId, status: 'pendente', paymentMethod: 'PIX', pixCode: Not(IsNull()), createdAt: MoreThan(fresh) },
         order: { createdAt: 'DESC' },
       });
-      if (existing?.pixCode) {
+      // Só reaproveita o QR se ele cobra exatamente o plano/valor atual. Plano trocado
+      // depois do PIX gerado (admin ou novo checkout) = QR antigo descartado: a tela
+      // mostraria um valor e o banco cobraria outro.
+      const sameCharge =
+        !!existing && existing.plan === user.plan && Math.round(Number(existing.value) * 100) === Math.round(price * 100);
+      if (existing?.pixCode && sameCharge) {
         return {
           success: true,
           transactionId: String(existing.id),
           status: 'pending' as const,
-          value: formatCurrency(price),
+          plan: existing.plan,
+          value: formatCurrency(Number(existing.value)),
           pixCode: existing.pixCode,
           pixImage: null,
         };
+      }
+      if (existing && !sameCharge) {
+        await this.txRepo.update(existing.id, { status: 'cancelado', pixCode: null });
       }
     }
 
@@ -957,8 +966,33 @@ export class BillingService {
     }
   }
 
+  /**
+   * Alarme: pagamento confirmado que não bate com o plano da conta (ex.: QR antigo de
+   * outro plano autorizado depois de uma troca de plano). Não bloqueia nada — avisa o
+   * grupo de erros para o suporte ajustar. Na ativação confere também o valor; na
+   * renovação só o plano, porque reajuste de tabela não muda assinaturas já ativas.
+   */
+  private async warnIfChargeDiffersFromPlan(tx: Transaction, user: User, checkValue: boolean): Promise<void> {
+    try {
+      const config = await this.configRepo.findOne({ where: {} });
+      const expectedCents = config ? Math.round(basePriceForPlan(user.plan, config) * 100) : null;
+      const paidCents = Math.round(Number(tx.value) * 100);
+      const planDiffers = tx.plan !== user.plan;
+      const valueDiffers = checkValue && expectedCents !== null && paidCents !== expectedCents;
+      if (!planDiffers && !valueDiffers) return;
+      const detail =
+        `tx ${tx.id} (user ${user.id}): pago ${tx.plan} ${formatCurrency(paidCents / 100)}, ` +
+        `conta no plano ${user.plan}${expectedCents !== null ? ` (${formatCurrency(expectedCents / 100)})` : ''}.`;
+      this.logger.warn(`Pagamento diferente do plano da conta — ${detail}`);
+      await this.notificationsService.notifyError({ context: 'Pagamento com valor/plano diferente da conta', detail });
+    } catch (err) {
+      this.logger.warn(`Checagem de plano do pagamento falhou (tx ${tx.id}): ${(err as Error).message}`);
+    }
+  }
+
   /** Efeitos de pagamento confirmado: comissão do indicador + cadastro do associado na Vencca. */
   private async confirmPaid(transaction: Transaction, link: ReferralLink | null, user: User) {
+    await this.warnIfChargeDiffersFromPlan(transaction, user, true);
     // Pagamento confirmado ativa a conta + libera os 3 benefícios inclusos no plano
     // (telemedicina, clube de descontos, veterinário) — sem depender do admin.
     // `firstActivation` separa a ativação inicial das renovações: boas-vindas e
@@ -1149,6 +1183,7 @@ export class BillingService {
 
   private async notifyRenewalPaid(tx: Transaction, user?: User): Promise<void> {
     const owner = user ?? (await this.usersService.findById(tx.userId));
+    await this.warnIfChargeDiffersFromPlan(tx, owner, false);
     await this.ensurePaidAccess(tx);
     await this.mailService.sendPaymentConfirmed(
       owner.email,

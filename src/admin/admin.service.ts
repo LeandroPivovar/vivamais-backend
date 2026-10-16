@@ -301,6 +301,40 @@ export class AdminService {
     }));
   }
 
+  /**
+   * Plano trocado pelo admin: a cobrança pendente do plano anterior não pode continuar
+   * pagável — o cliente que guardou o QR/copia-e-cola autorizaria o valor antigo enquanto
+   * a conta mostra o novo. Pix Automático só é cancelado se ainda não foi autorizado
+   * (CREATED); autorizado fica como está e o fluxo de pagamento barra e pede suporte.
+   * Best-effort: a troca de plano em si nunca falha por causa do gateway.
+   */
+  async cancelPendingChargesForOtherPlan(userId: number, plan: string): Promise<void> {
+    const pending = await this.txRepo.find({ where: { userId, status: 'pendente' } });
+    for (const tx of pending) {
+      if (tx.plan === plan) continue;
+      try {
+        if (tx.gatewayProvider === 'woovi') {
+          const id = tx.gatewaySubscriptionId || tx.gatewayIdentifier;
+          if (!id) continue;
+          const state = await this.wooviService.getSubscriptionForPayment(id);
+          if (!state) continue;
+          const closed =
+            ['CANCELED', 'CANCELLED', 'EXPIRED'].includes(state.subStatus) ||
+            ['CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(state.pixRecStatus);
+          if (!closed) {
+            if (state.pixRecStatus !== 'CREATED') continue;
+            if (!(await this.wooviService.cancelPendingSubscription(id))) continue;
+          }
+        } else if (tx.gatewayProvider === 'pagarme' && tx.gatewaySubscriptionId) {
+          if (!(await this.pagarmeService.cancelSubscription(tx.gatewaySubscriptionId))) continue;
+        }
+        await this.txRepo.update(tx.id, { status: 'cancelado', pixCode: null });
+      } catch {
+        // Fica pendente: o próximo "pagar" confere de novo na Woovi antes de gerar QR.
+      }
+    }
+  }
+
   async toggleUserSubscription(userId: number, activate: boolean) {
     const user = await this.usersService.findById(userId);
     if (activate) {

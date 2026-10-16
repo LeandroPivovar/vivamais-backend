@@ -31,7 +31,11 @@ export class AdminController {
 
   @Put('users/:id')
   async updateUser(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+    const previousPlan = (await this.usersService.findById(id)).plan;
     const user = await this.usersService.update(id, dto);
+    if (user.plan !== previousPlan) {
+      await this.adminService.cancelPendingChargesForOtherPlan(user.id, user.plan);
+    }
     return this.usersService.toAdminResponse(await this.usersService.findById(user.id));
   }
 

@@ -9,6 +9,11 @@ const { BillingService } = require('../dist/billing/billing.service');
 const { AdminService } = require('../dist/admin/admin.service');
 const { ActivitiesService } = require('../dist/activities/activities.service');
 
+// Frontend ao lado do backend: 'frontend' na VPS, 'vivamais-frontend' num clone local.
+const FRONTEND_DIR = ['../../frontend', '../../vivamais-frontend']
+  .map((p) => path.resolve(__dirname, p))
+  .find((p) => fs.existsSync(p)) ?? path.resolve(__dirname, '../../frontend');
+
 // ---------------------------------------------------------------------------
 // 1. Login por CPF (com pontuação, sem pontuação, 10 dígitos sem zero à esquerda, e-mail)
 // ---------------------------------------------------------------------------
@@ -413,7 +418,7 @@ test('5. Atividades Recentes e Frontend: lista histórico real, remove dados fal
 
   // Verifica que o DashboardView.vue não contém mais as strings falsas fixas
   const dashboardVue = fs.readFileSync(
-    path.resolve(__dirname, '../../frontend/src/components/DashboardView.vue'),
+    path.join(FRONTEND_DIR, 'src/components/DashboardView.vue'),
     'utf8'
   );
   assert.equal(dashboardVue.includes('Farmácia Drogasil'), false, 'Não deve conter atividade fake da Drogasil');
@@ -423,7 +428,7 @@ test('5. Atividades Recentes e Frontend: lista histórico real, remove dados fal
 
   // Verifica que api.js exporta formatCpf e formata corretamente
   const apiJs = fs.readFileSync(
-    path.resolve(__dirname, '../../frontend/src/services/api.js'),
+    path.join(FRONTEND_DIR, 'src/services/api.js'),
     'utf8'
   );
   assert.equal(apiJs.includes('export function formatCpf'), true, 'api.js deve exportar formatCpf');
