@@ -26,6 +26,11 @@ export interface PagarmeSubInput {
   cardToken: string;
   planName: string;
   amountCents: number;
+  /**
+   * Oferta de 1º mês: desconto fixo (centavos) aplicado SÓ no 1º ciclo. A assinatura é
+   * criada com o preço cheio em `amountCents`; do 2º mês em diante a Pagar.me cobra o cheio.
+   */
+  firstCycleDiscountCents?: number;
 }
 
 export interface PagarmeInvoice {
@@ -118,6 +123,9 @@ export class PagarmeService {
           pricing_scheme: { scheme_type: 'unit', price: input.amountCents },
         },
       ],
+      ...(input.firstCycleDiscountCents && input.firstCycleDiscountCents > 0
+        ? { discounts: [{ cycles: '1', value: String(input.firstCycleDiscountCents), discount_type: 'flat' }] }
+        : {}),
     };
     try {
       const res = await fetch(`${BASE}/subscriptions`, {

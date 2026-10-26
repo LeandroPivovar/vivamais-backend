@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Transaction } from './entities/transaction.entity';
 import { TrialSignupLink } from './entities/trial-signup-link.entity';
+import { PromoLink } from './entities/promo-link.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
@@ -13,7 +14,7 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Transaction, TrialSignupLink, AppConfig, User]), UsersModule, ReferralsModule, VenccaModule, PaymentModule, ClubeCertoModule],
+  imports: [TypeOrmModule.forFeature([Transaction, TrialSignupLink, PromoLink, AppConfig, User]), UsersModule, ReferralsModule, VenccaModule, PaymentModule, ClubeCertoModule],
   controllers: [BillingController],
   providers: [BillingService],
 })

@@ -27,6 +27,12 @@ export class BillingController {
     return this.billingService.checkout(dto, ip);
   }
 
+  /** Público: dados do link de oferta (/oferta/<slug>) para a página de compra. */
+  @Get('promo/:slug')
+  promoLink(@Param('slug') slug: string) {
+    return this.billingService.getPromoLink(slug);
+  }
+
   @Get('trial-link/:token')
   trialLink(@Param('token') token: string) {
     return this.billingService.getTrialSignupLink(token);

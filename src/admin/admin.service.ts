@@ -1,10 +1,12 @@
-import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { AppConfig } from './entities/config.entity';
 import { Transaction } from '../billing/entities/transaction.entity';
 import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
+import { PromoLink } from '../billing/entities/promo-link.entity';
+import { CreatePromoLinkDto } from './dto/create-promo-link.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -77,6 +79,8 @@ export class AdminService {
     private massflowService: MassflowService,
     private wooviService: WooviService,
     private pagarmeService: PagarmeService,
+    // Por último: os testes montam o serviço passando as dependências na ordem.
+    @InjectRepository(PromoLink) private promoLinksRepo: Repository<PromoLink>,
   ) {}
 
   /** Config crua — uso interno (preços, gateway). Contém a chave secreta em texto puro. */
@@ -190,6 +194,74 @@ export class AdminService {
       url: publicUrl(`/cadastro-30-dias/${link.token}`),
       used: false,
     };
+  }
+
+  /** Linha do link de oferta para o painel: URL pronta, preço cheio e situação. */
+  private promoLinkResponse(link: PromoLink, config: AppConfig | null) {
+    const expired = !!link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now();
+    const soldOut = link.maxUses != null && link.usesCount >= link.maxUses;
+    return {
+      id: link.id,
+      slug: link.slug,
+      url: publicUrl(`/oferta/${link.slug}`),
+      plan: link.plan,
+      firstMonthPrice: Number(link.firstMonthPrice),
+      regularPrice: config ? basePriceForPlan(link.plan, config) : null,
+      maxUses: link.maxUses,
+      usesCount: link.usesCount,
+      expiresAt: link.expiresAt,
+      active: link.active,
+      status: !link.active ? 'encerrado' : expired ? 'expirado' : soldOut ? 'esgotado' : 'ativo',
+      createdAt: link.createdAt,
+    };
+  }
+
+  async listPromoLinks() {
+    const [links, config] = await Promise.all([
+      this.promoLinksRepo.find({ order: { createdAt: 'DESC' } }),
+      this.configRepo.findOne({ where: {} }),
+    ]);
+    return links.map((l) => this.promoLinkResponse(l, config));
+  }
+
+  async createPromoLink(dto: CreatePromoLinkDto, adminId: number) {
+    const slug = dto.slug.trim().toLowerCase();
+    if (await this.promoLinksRepo.findOne({ where: { slug } })) {
+      throw new ConflictException('Já existe um link com esse fim de URL. Escolha outro.');
+    }
+    const config = await this.getConfig();
+    const regular = basePriceForPlan(dto.plan, config);
+    if (Math.round(dto.firstMonthPrice * 100) >= Math.round(regular * 100)) {
+      throw new BadRequestException(
+        `O valor do 1º mês precisa ser menor que o preço normal do plano ${dto.plan} (R$ ${regular.toFixed(2).replace('.', ',')}).`,
+      );
+    }
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('A data de validade precisa ser no futuro.');
+    }
+    const link = await this.promoLinksRepo.save(
+      this.promoLinksRepo.create({
+        slug,
+        plan: dto.plan,
+        firstMonthPrice: Number(dto.firstMonthPrice.toFixed(2)),
+        maxUses: dto.maxUses ?? null,
+        usesCount: 0,
+        expiresAt,
+        active: true,
+        createdById: adminId,
+      }),
+    );
+    return this.promoLinkResponse(link, config);
+  }
+
+  /** Encerra ou reabre um link (o histórico e os usos ficam). */
+  async setPromoLinkActive(id: number, active: boolean) {
+    const link = await this.promoLinksRepo.findOne({ where: { id } });
+    if (!link) throw new NotFoundException('Link de oferta não encontrado.');
+    link.active = active;
+    await this.promoLinksRepo.save(link);
+    return this.promoLinkResponse(link, await this.configRepo.findOne({ where: {} }));
   }
 
   async updateConfig(dto: UpdateConfigDto): Promise<AdminConfigResponse> {

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
-    "test": "nest build && node --test tests/all-adjustments.test.cjs tests/pix-plan-regression.cjs tests/plan-change-guards.test.cjs",
+    "test": "nest build && node --test tests/all-adjustments.test.cjs tests/pix-plan-regression.cjs tests/plan-change-guards.test.cjs tests/checkout-webhooks.cjs tests/promo-links.test.cjs",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",

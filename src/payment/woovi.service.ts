@@ -40,6 +40,12 @@ export interface WooviSubscriptionInput {
   dayGenerateCharge?: number;
   /** Jornada do Pix Automático: PAYMENT_ON_APPROVAL (padrão, cobra na hora) ou ONLY_RECURRENCY (autoriza hoje e cobra no vencimento futuro, ex: D+30). */
   journey?: 'PAYMENT_ON_APPROVAL' | 'ONLY_RECURRENCY';
+  /**
+   * Oferta de 1º mês: torna a assinatura de VALOR VARIÁVEL. `amountCents` é cobrado na
+   * aprovação (jornada 3) e o cliente autoriza no banco um teto de pelo menos este valor
+   * (o preço cheio). Depois do 1º pagamento, updateSubscriptionValue sobe para o cheio.
+   */
+  minimumValueCents?: number;
 }
 
 export interface WooviSubscriptionResult {
@@ -146,6 +152,7 @@ export class WooviService {
       pixRecurringOptions: {
         journey: input.journey ?? 'PAYMENT_ON_APPROVAL',
         retryPolicy: 'THREE_RETRIES_7_DAYS',
+        ...(input.minimumValueCents ? { minimumValue: input.minimumValueCents } : {}),
       },
     };
 
@@ -175,6 +182,34 @@ export class WooviService {
     } catch (err) {
       this.logger.error(`Erro ao chamar Woovi: ${(err as Error).message}`);
       return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  /**
+   * Troca o valor das PRÓXIMAS cobranças de uma assinatura de valor variável (criada com
+   * minimumValue). Usado na oferta de 1º mês: depois do 1º pagamento, sobe para o preço
+   * cheio. Confirma relendo a assinatura — só devolve true se o valor novo pegou.
+   */
+  async updateSubscriptionValue(id: string, valueCents: number): Promise<boolean> {
+    const cfg = await this.getConfig();
+    if (!cfg?.wooviEnabled || !cfg?.wooviAppId || !id) return false;
+    try {
+      const res = await fetch(`${this.baseUrl(cfg)}/subscriptions/${encodeURIComponent(id)}/value`, {
+        method: 'PUT',
+        headers: this.headers(cfg),
+        body: JSON.stringify({ value: valueCents }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        this.logger.warn(`Woovi: troca de valor da assinatura falhou (HTTP ${res.status}): ${text.slice(0, 200)}`);
+        return false;
+      }
+      const state = await this.getSubscriptionForPayment(id);
+      return state?.valueCents === valueCents;
+    } catch (err) {
+      this.logger.warn(`Woovi: troca de valor da assinatura falhou: ${(err as Error).message}`);
+      return false;
     }
   }
 

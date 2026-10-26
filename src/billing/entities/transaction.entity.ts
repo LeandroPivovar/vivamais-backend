@@ -73,6 +73,21 @@ export class Transaction {
   @Column({ type: 'text', nullable: true })
   pixCode: string | null;
 
+  // --- Oferta de 1º mês (link de oferta) ---
+  // Valor das mensalidades SEGUINTES quando `value` é o preço promocional do 1º mês.
+  // Nulo = assinatura normal (todas as cobranças valem `value`). Renovações usam este valor.
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true, transformer: DecimalTransformer })
+  recurringValue: number | null;
+
+  // Link de oferta que originou a venda (conta o uso quando o pagamento confirma).
+  @Column({ type: 'int', nullable: true })
+  promoLinkId: number | null;
+
+  // Quando a assinatura Woovi passou para o preço cheio depois do 1º pagamento.
+  // Nulo com recurringValue preenchido e pagamento confirmado = troca pendente (cron tenta de novo).
+  @Column({ type: 'datetime', nullable: true })
+  recurringValueSyncedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

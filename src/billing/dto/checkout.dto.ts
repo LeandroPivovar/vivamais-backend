@@ -15,6 +15,11 @@ export class CheckoutDto {
   @IsString()
   offer?: string;
 
+  /** Fim da URL do link de oferta (/oferta/<slug>) — 1º mês promocional. */
+  @IsOptional()
+  @IsString()
+  promoSlug?: string;
+
   @IsString()
   name: string;
 

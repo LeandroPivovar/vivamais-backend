@@ -125,7 +125,7 @@ test('Alarme: pagamento de plano diferente da conta avisa o grupo de erros', asy
   const f = alarmFixture();
   await f.svc.warnIfChargeDiffersFromPlan({ id: 279, plan: 'Individual', value: 79.9 }, { id: 208, plan: 'Família' }, true);
   assert.equal(f.alerts.length, 1);
-  assert.match(f.alerts[0].detail, /pago Individual R\$ 79,90, conta no plano Família \(R\$ 129,90\)/);
+  assert.match(f.alerts[0].detail, /assinatura Individual R\$ 79,90, conta no plano Família \(R\$ 129,90\)/);
 });
 
 test('Alarme: pagamento que bate com o plano não avisa', async () => {

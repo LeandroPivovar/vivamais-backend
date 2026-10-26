@@ -8,6 +8,7 @@ import { AdminService } from './admin.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
+import { CreatePromoLinkDto } from './dto/create-promo-link.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -55,6 +56,22 @@ export class AdminController {
   @Post('users/:id/renew')
   renewSubscription(@Param('id', ParseIntPipe) id: number) {
     return this.adminService.renewUserSubscription(id);
+  }
+
+  /** Links de oferta (/oferta/<slug>): 1º mês promocional, depois o preço cheio. */
+  @Get('promo-links')
+  listPromoLinks() {
+    return this.adminService.listPromoLinks();
+  }
+
+  @Post('promo-links')
+  createPromoLink(@CurrentUser() authUser: { id: number }, @Body() dto: CreatePromoLinkDto) {
+    return this.adminService.createPromoLink(dto, authUser.id);
+  }
+
+  @Put('promo-links/:id/active')
+  setPromoLinkActive(@Param('id', ParseIntPipe) id: number, @Body() body: { active: boolean }) {
+    return this.adminService.setPromoLinkActive(id, !!body?.active);
   }
 
   @Post('trial-links')

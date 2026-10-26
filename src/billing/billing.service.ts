@@ -5,6 +5,7 @@ import { Between, In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeor
 import * as bcrypt from 'bcrypt';
 import { Transaction } from './entities/transaction.entity';
 import { TrialSignupLink } from './entities/trial-signup-link.entity';
+import { PromoLink } from './entities/promo-link.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
@@ -94,6 +95,8 @@ export class BillingService {
     private notificationsService: NotificationsService,
     private massflowService: MassflowService,
     private metaCapiService: MetaCapiService,
+    // Por último: os testes montam o serviço passando as dependências na ordem.
+    @InjectRepository(PromoLink) private promoLinksRepo: Repository<PromoLink>,
   ) {}
 
   private onceWebhook(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
@@ -181,6 +184,101 @@ export class BillingService {
   async registerReferralClick(refCode: string, planType?: string) {
     await this.referralsService.registerClickByRefCode(refCode, planType);
     return { ok: true };
+  }
+
+  /** Valor das mensalidades seguintes: o cheio da oferta de 1º mês, ou o próprio valor. */
+  private recurringValueOf(tx: Transaction): number {
+    return tx.recurringValue != null ? Number(tx.recurringValue) : Number(tx.value);
+  }
+
+  /** Motivo pelo qual o link de oferta não aceita mais compras (null = disponível). */
+  private promoUnavailableReason(link: PromoLink): string | null {
+    if (!link.active) return 'Esta oferta foi encerrada.';
+    if (link.expiresAt && new Date(link.expiresAt).getTime() <= Date.now()) return 'Esta oferta expirou.';
+    if (link.maxUses != null && link.usesCount >= link.maxUses) return 'Esta oferta esgotou.';
+    return null;
+  }
+
+  /** Página pública do link de oferta (/oferta/<slug>): plano e valores para o checkout. */
+  async getPromoLink(slug: string) {
+    const link = await this.promoLinksRepo.findOne({ where: { slug: (slug || '').toLowerCase() } });
+    if (!link) throw new NotFoundException('Oferta não encontrada.');
+    const config = await this.configRepo.findOne({ where: {} });
+    if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
+    const reason = this.promoUnavailableReason(link);
+    return {
+      slug: link.slug,
+      plan: link.plan,
+      firstMonthPrice: Number(link.firstMonthPrice),
+      regularPrice: basePriceForPlan(link.plan, config),
+      expiresAt: link.expiresAt,
+      available: !reason,
+      reason,
+    };
+  }
+
+  /**
+   * Oferta de 1º mês aplicada no checkout. `firstMonthPrice` é cobrado agora e
+   * `recurringValue` (preço cheio) nas mensalidades seguintes.
+   */
+  private async resolveCheckoutOffer(
+    dto: CheckoutDto,
+    config: AppConfig,
+  ): Promise<{ linkId: number | null; firstMonthPrice: number; recurringValue: number } | null> {
+    const regular = basePriceForPlan(dto.planType, config);
+    if (dto.promoSlug?.trim()) {
+      const link = await this.promoLinksRepo.findOne({ where: { slug: dto.promoSlug.trim().toLowerCase() } });
+      if (!link) throw new BadRequestException('Oferta não encontrada.');
+      const reason = this.promoUnavailableReason(link);
+      if (reason) throw new BadRequestException(reason);
+      if (link.plan !== dto.planType) throw new BadRequestException('Esta oferta é válida apenas para o plano ' + link.plan + '.');
+      return { linkId: link.id, firstMonthPrice: Number(link.firstMonthPrice), recurringValue: regular };
+    }
+    // Oferta fixa antiga (/plano-familia): Família com 1º mês a R$ 19,90.
+    if (dto.offer === 'promocional' || dto.offer === 'familia-promocional' || dto.offer === 'familia-19') {
+      if (dto.planType !== 'Família') throw new BadRequestException('Esta oferta é válida apenas para o plano Família.');
+      return { linkId: null, firstMonthPrice: 19.9, recurringValue: regular };
+    }
+    return null;
+  }
+
+  /**
+   * Oferta de 1º mês no Pix Automático: depois do 1º pagamento, sobe a assinatura Woovi
+   * para o preço cheio (as próximas cobranças saem com ele). Idempotente; se a Woovi
+   * falhar, a reconciliação de 5 em 5 min tenta de novo e o grupo de erros é avisado.
+   */
+  private async syncRecurringValue(origin: Transaction): Promise<boolean> {
+    if (origin.recurringValue == null || origin.recurringValueSyncedAt) return true;
+    if (origin.gatewayProvider !== 'woovi') return true; // Pagar.me já cobra o cheio sozinho (desconto de 1 ciclo)
+    const id = origin.gatewaySubscriptionId || origin.gatewayIdentifier;
+    if (!id) return false;
+    const ok = await this.wooviService.updateSubscriptionValue(id, Math.round(Number(origin.recurringValue) * 100));
+    if (ok) {
+      origin.recurringValueSyncedAt = new Date();
+      await this.txRepo.update(origin.id, { recurringValueSyncedAt: origin.recurringValueSyncedAt });
+      this.logger.log(`Woovi: assinatura da tx ${origin.id} passou para ${formatCurrency(Number(origin.recurringValue))} após o 1º mês promocional.`);
+    }
+    return ok;
+  }
+
+  @Cron('*/5 * * * *')
+  async retryRecurringValueSync() {
+    const pending = await this.txRepo.find({
+      where: { status: 'pago', gatewayProvider: 'woovi', recurringValue: Not(IsNull()), recurringValueSyncedAt: IsNull() },
+      take: 50,
+    });
+    for (const tx of pending) {
+      try {
+        if (await this.syncRecurringValue(tx)) continue;
+        // O NotificationsService deduplica o mesmo aviso por 10 min — não vira spam a cada 5.
+        await this.notificationsService.notifyError({
+          context: 'Oferta 1º mês: não foi possível subir o valor da assinatura Pix',
+          detail: `tx ${tx.id} (user ${tx.userId}) continua cobrando ${formatCurrency(Number(tx.value))}; esperado ${formatCurrency(Number(tx.recurringValue))}. Tentando de novo a cada 5 min.`,
+        });
+      } catch (err) {
+        this.logger.warn(`Troca de valor pós-oferta falhou (tx ${tx.id}): ${(err as Error).message}`);
+      }
+    }
   }
 
   async getTrialSignupLink(token: string) {
@@ -411,6 +509,11 @@ export class BillingService {
       if (!link) throw new BadRequestException('Link de indicação inválido para o plano selecionado.');
     }
 
+    // Oferta de 1º mês (link de oferta ou /plano-familia): validada antes de criar/alterar o cadastro.
+    const offerConfig = await this.configRepo.findOne({ where: {} });
+    if (!offerConfig) throw new NotFoundException('Configuração do sistema não encontrada.');
+    const offer = await this.resolveCheckoutOffer(dto, offerConfig);
+
     const cleanCpf = (dto.cpf || "").replace(/\D/g, "");
     const cleanEmail = (dto.email || "").trim().toLowerCase();
 
@@ -495,15 +598,13 @@ export class BillingService {
     const config = await this.configRepo.findOne({ where: {} });
     if (!config) throw new NotFoundException("Configuração do sistema não encontrada.");
 
-    let price = basePriceForPlan(dto.planType, config);
-    let planLabel = dto.planType;
-    let planGatewayName = dto.planType;
-
-    if (dto.offer === 'promocional' || dto.offer === 'familia-promocional' || dto.offer === 'familia-19') {
-      price = 19.90;
-      planLabel = 'Família (1º Mês Promo R$ 19,90)';
-      planGatewayName = 'Família Promo 1º Mês';
-    }
+    // Com oferta: cobra o 1º mês promocional agora e grava o preço cheio para as
+    // mensalidades seguintes. O plano fica com o nome real (comparações e renovações).
+    const price = offer ? offer.firstMonthPrice : basePriceForPlan(dto.planType, config);
+    const recurringValue = offer ? offer.recurringValue : null;
+    const promoLinkId = offer?.linkId ?? null;
+    const planLabel = dto.planType;
+    const planGatewayName = dto.planType;
 
     // ---- Fluxo Cartão de Crédito (Pagar.me) — vale p/ qualquer gateway PIX ativo ----
     if (dto.paymentMethod === 'card' && (await this.pagarmeService.isEnabled())) {
@@ -516,6 +617,8 @@ export class BillingService {
         userId: savedUser.id,
         plan: planLabel,
         value: price,
+        recurringValue,
+        promoLinkId,
         status: 'pendente',
         paymentMethod: 'Cartão de Crédito',
         commissionMmn: 0,
@@ -540,7 +643,9 @@ export class BillingService {
         },
         cardToken: dto.cardToken,
         planName: planGatewayName,
-        amountCents: Math.round(price * 100),
+        amountCents: Math.round((recurringValue ?? price) * 100),
+        firstCycleDiscountCents:
+          recurringValue != null && recurringValue > price ? Math.round((recurringValue - price) * 100) : undefined,
       });
       if (!result.ok || !result.subscriptionId) {
         await this.txRepo.remove(transaction);
@@ -593,6 +698,8 @@ export class BillingService {
         userId: savedUser.id,
         plan: planLabel,
         value: price,
+        recurringValue,
+        promoLinkId,
         status: 'pendente',
         paymentMethod: 'Pix Automático',
         commissionMmn: 0,
@@ -607,6 +714,9 @@ export class BillingService {
         planName: planGatewayName,
         client: { name: dto.name, email: dto.email, phone: `+55${phone}`, taxID: onlyDigits(dto.cpf) },
         dayGenerateCharge: new Date().getDate(), // PAYMENT_ON_APPROVAL exige o dia de hoje
+        // Oferta: assinatura de valor variável — o cliente autoriza no banco um teto de pelo
+        // menos o preço cheio; depois do 1º pagamento o valor sobe (syncRecurringValue).
+        minimumValueCents: recurringValue != null ? Math.round(recurringValue * 100) : undefined,
       });
 
       if (!result.ok || !result.emv) {
@@ -649,6 +759,8 @@ export class BillingService {
         userId: savedUser.id,
         plan: planLabel,
         value: price,
+        recurringValue,
+        promoLinkId,
         status: 'pago',
         paymentMethod: dto.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito',
         commissionMmn: 0,
@@ -665,6 +777,12 @@ export class BillingService {
     }
 
     // ---- Fluxo real (gateway Veenca) ----
+    // A Veenca não suporta 1º mês com valor diferente: a assinatura cobraria o
+    // promocional para sempre. Oferta só sai por Pix Automático (Woovi) ou cartão.
+    if (offer) {
+      if (isNewUser) await this.usersRepo.remove(savedUser);
+      throw new BadRequestException('Esta oferta está disponível apenas no Pix Automático ou no cartão de crédito.');
+    }
     const phone = formatBrazilPhone(dto.phone);
     if (!phone) {
       if (isNewUser) await this.usersRepo.remove(savedUser);
@@ -676,6 +794,8 @@ export class BillingService {
       userId: savedUser.id,
       plan: planLabel,
       value: price,
+      recurringValue,
+      promoLinkId,
       status: 'pendente',
       paymentMethod: dto.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito',
       commissionMmn: 0,
@@ -762,7 +882,9 @@ export class BillingService {
     const seen = new Set<string>();
     let reusable: Transaction | null = null;
     for (const tx of rows) {
-      const matches = tx.plan === plan && Math.round(Number(tx.value) * 100) === expectedCents;
+      // Oferta de 1º mês: a assinatura vale pelo preço cheio (recurringValue); o QR pendente
+      // cobra o promocional (tx.value), que é o valor atual dela na Woovi.
+      const matches = tx.plan === plan && Math.round(this.recurringValueOf(tx) * 100) === expectedCents;
       if (['cancelado', 'duplicado'].includes(tx.status)) continue;
       if (tx.status !== 'pendente' && matches) continue;
       const id = tx.gatewaySubscriptionId || tx.gatewayIdentifier;
@@ -780,7 +902,7 @@ export class BillingService {
         if (tx.status === 'pendente') await this.txRepo.update(tx.id, { status: 'cancelado', pixCode: null });
         continue;
       }
-      const samePrice = matches && state.valueCents === expectedCents;
+      const samePrice = matches && state.valueCents === Math.round(Number(tx.value) * 100);
       const fresh = tx.createdAt.getTime() > Date.now() - 3 * 24 * 60 * 60 * 1000;
       if (samePrice && tx.status === 'pendente' && tx.pixCode && fresh
           && ['CREATED', 'APPROVED'].includes(state.pixRecStatus)) {
@@ -1120,12 +1242,13 @@ export class BillingService {
     try {
       const config = await this.configRepo.findOne({ where: {} });
       const expectedCents = config ? Math.round(basePriceForPlan(user.plan, config) * 100) : null;
-      const paidCents = Math.round(Number(tx.value) * 100);
+      // Oferta de 1º mês: o que vale é o preço cheio da assinatura, não o promocional pago agora.
+      const paidCents = Math.round(this.recurringValueOf(tx) * 100);
       const planDiffers = tx.plan !== user.plan;
       const valueDiffers = checkValue && expectedCents !== null && paidCents !== expectedCents;
       if (!planDiffers && !valueDiffers) return;
       const detail =
-        `tx ${tx.id} (user ${user.id}): pago ${tx.plan} ${formatCurrency(paidCents / 100)}, ` +
+        `tx ${tx.id} (user ${user.id}): assinatura ${tx.plan} ${formatCurrency(paidCents / 100)}, ` +
         `conta no plano ${user.plan}${expectedCents !== null ? ` (${formatCurrency(expectedCents / 100)})` : ''}.`;
       this.logger.warn(`Pagamento diferente do plano da conta — ${detail}`);
       await this.notificationsService.notifyError({ context: 'Pagamento com valor/plano diferente da conta', detail });
@@ -1137,6 +1260,12 @@ export class BillingService {
   /** Efeitos de pagamento confirmado: comissão do indicador + cadastro do associado na Vencca. */
   private async confirmPaid(transaction: Transaction, link: ReferralLink | null, user: User) {
     await this.warnIfChargeDiffersFromPlan(transaction, user, true);
+    // Venda por link de oferta: conta o uso (limite de vendas do link). Incremento atômico.
+    if (transaction.promoLinkId) {
+      await this.promoLinksRepo.increment({ id: transaction.promoLinkId }, 'usesCount', 1).catch((err) =>
+        this.logger.warn(`Contagem de uso do link de oferta ${transaction.promoLinkId} falhou: ${(err as Error).message}`),
+      );
+    }
     // Pagamento confirmado ativa a conta + libera os 3 benefícios inclusos no plano
     // (telemedicina, clube de descontos, veterinário) — sem depender do admin.
     // `firstActivation` separa a ativação inicial das renovações: boas-vindas e
@@ -1419,7 +1548,7 @@ export class BillingService {
       this.txRepo.create({
         userId: origin.userId,
         plan: origin.plan,
-        value: origin.value,
+        value: this.recurringValueOf(origin),
         status: 'pago',
         paymentMethod: origin.paymentMethod,
         commissionMmn: 0, // renovação não gera comissão de indicação
@@ -1506,7 +1635,7 @@ export class BillingService {
           this.txRepo.create({
             userId: origin.userId,
             plan: origin.plan,
-            value: origin.value,
+            value: this.recurringValueOf(origin),
             status: 'pago',
             paymentMethod: 'Pix Automático',
             commissionMmn: 0,
@@ -1544,13 +1673,15 @@ export class BillingService {
           await this.confirmPaid(origin, link, user); // ativa conta + comissão + telemed
         }
         this.logger.log(`Woovi: 1ª cobrança paga (assinatura user ${origin.userId}), conta ${isRenewalSub ? 'renovada' : 'ativada'}.`);
+        // Oferta de 1º mês: a partir de agora a assinatura cobra o preço cheio.
+        await this.syncRecurringValue(origin).catch(() => false);
       } else {
         // Cobrança mensal seguinte → nova fatura paga (renovação, sem comissão).
         const renewal = await this.txRepo.save(
           this.txRepo.create({
             userId: origin.userId,
             plan: origin.plan,
-            value: origin.value,
+            value: this.recurringValueOf(origin),
             status: 'pago',
             paymentMethod: 'Pix Automático',
             commissionMmn: 0,
@@ -1704,7 +1835,7 @@ export class BillingService {
         this.txRepo.create({
           userId: origin.userId,
           plan: origin.plan,
-          value: origin.value,
+          value: this.recurringValueOf(origin),
           status: 'pago',
           paymentMethod: 'Cartão de Crédito',
           commissionMmn: 0,
