@@ -124,7 +124,10 @@ export class MassflowService {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(typeof body.event_id === 'string' ? { 'Idempotency-Key': body.event_id } : {}),
+        },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15000),
       });
@@ -146,14 +149,38 @@ export class MassflowService {
     return (await this.send(events, eventsSource, 'eventos', body)).ok;
   }
 
+  /** Integração adicional do checkout: somente venda e abandono dos dois planos. */
+  private async sendCheckoutEvent(
+    target: 'sale' | 'cart', body: Record<string, unknown>, existingUrl: string,
+  ): Promise<boolean> {
+    if (!['Individual', 'Família'].includes(String(body.plano))) return true;
+    const url = (target === 'sale'
+      ? process.env.CHECKOUT_SALE_WEBHOOK_URL
+      : process.env.CHECKOUT_ABANDON_WEBHOOK_URL)?.trim() ?? '';
+    // Preserva a automação existente e evita duplicar um envio para a mesma URL.
+    if (!url || url === existingUrl.trim()) return true;
+    const eventId = body.transacaoId != null ? `vivamais:${body.evento}:${body.transacaoId}` : undefined;
+    return (await this.send(url, 'env', `checkout ${target}`, {
+      ...body,
+      origem: 'vivamais_checkout',
+      ...(eventId ? { event_id: eventId } : {}),
+    })).ok;
+  }
+
   /** Pagamento processado — dispara a esteira de compra. */
   async notifyPurchase(lead: MassflowLead): Promise<boolean> {
-    return this.sendEvent({
+    const body = {
       evento: 'compra_concluida',
       ...this.basePayload(lead),
       metodoPagamento: lead.paymentMethod ?? null,
       data: new Date().toISOString(),
-    });
+    };
+    const { events, eventsSource } = await this.urls();
+    const results = await Promise.all([
+      this.send(events, eventsSource, 'eventos', body).then(result => result.ok),
+      this.sendCheckoutEvent('sale', body, events),
+    ]);
+    return results.every(Boolean);
   }
 
   /** Cobrança mensal seguinte paga (Pix Automático ou cartão). */
@@ -177,15 +204,19 @@ export class MassflowService {
   /** Cobrança parada há 5 min sem pagamento — dispara a esteira de carrinho. */
   async notifyAbandonedCart(lead: MassflowLead & { minutesPending: number; checkoutUrl: string }): Promise<boolean> {
     const { cart, cartSource } = await this.urls();
-    const res = await this.send(cart, cartSource, 'carrinho', {
+    const body = {
       evento: 'carrinho_abandonado',
       ...this.basePayload(lead),
       metodoPagamento: lead.paymentMethod ?? null,
       minutosPendente: lead.minutesPending,
       linkPagamento: lead.checkoutUrl,
       data: new Date().toISOString(),
-    });
-    return res.ok;
+    };
+    const results = await Promise.all([
+      this.send(cart, cartSource, 'carrinho', body).then(result => result.ok),
+      this.sendCheckoutEvent('cart', body, cart),
+    ]);
+    return results.every(Boolean);
   }
 
   /**

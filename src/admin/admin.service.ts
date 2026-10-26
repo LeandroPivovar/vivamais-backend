@@ -333,4 +333,38 @@ export class AdminService {
     return this.usersService.toAdminResponse(await this.usersService.findById(userId));
   }
 
+  /**
+   * Renova manualmente a assinatura do usuário por mais 30 dias (gera lançamento pago e reativa acessos)
+   * sem precisar excluir nem recriar a conta.
+   */
+  async renewUserSubscription(userId: number) {
+    const user = await this.usersService.findById(userId);
+    const config = await this.getConfig();
+    const price = basePriceForPlan(user.plan, config);
+    const mmn = mmnForPlan(user.plan, config);
+
+    await this.txRepo.save(
+      this.txRepo.create({
+        userId: user.id,
+        plan: user.plan,
+        value: price,
+        status: 'Renovado (Pago)',
+        paymentMethod: 'Manual (Admin)',
+        commissionMmn: mmn,
+      }),
+    );
+
+    await this.usersService.update(userId, {
+      status: 'ativo',
+      access: { health: true, clube: true, pet: true, funeral: user.accessFuneral },
+    });
+
+    if (!user.telemedRegistered) {
+      const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
+      if (venccaOk) await this.usersService.markTelemedRegistered(user.id);
+    }
+    await this.clubeCertoService.registerAssociate(user);
+
+    return this.usersService.toAdminResponse(await this.usersService.findById(userId));
+  }
 }
