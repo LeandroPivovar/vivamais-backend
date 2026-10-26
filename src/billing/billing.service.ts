@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
+import { Between, In, IsNull, LessThan, MoreThan, Not, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { Transaction } from './entities/transaction.entity';
 import { TrialSignupLink } from './entities/trial-signup-link.entity';
@@ -155,9 +155,13 @@ export class BillingService {
     if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
 
     const price = basePriceForPlan(user.plan, config); // cobra o valor da tabela do plano (79,90 / 129,90)
-    const lastTx = await this.txRepo.findOne({ where: { userId, status: Not('duplicado') }, order: { createdAt: 'DESC' } });
-    const nextBilling = user.trialEndsAt && !lastTx ? new Date(user.trialEndsAt) : lastTx ? new Date(lastTx.createdAt) : new Date();
-    if (!user.trialEndsAt || lastTx) nextBilling.setMonth(nextBilling.getMonth() + 1);
+    const lastPaidTx = await this.txRepo.findOne({
+      where: { userId, status: In(['pago', 'Renovado (Pago)']) },
+      order: { createdAt: 'DESC' },
+    });
+    const lastTx = lastPaidTx ?? (await this.txRepo.findOne({ where: { userId, status: Not('duplicado') }, order: { createdAt: 'DESC' } }));
+    const nextBilling = user.trialEndsAt && !lastPaidTx ? new Date(user.trialEndsAt) : lastTx ? new Date(lastTx.createdAt) : new Date();
+    if (!user.trialEndsAt || lastPaidTx) nextBilling.setMonth(nextBilling.getMonth() + 1);
 
     return {
       plan: user.plan,
@@ -181,8 +185,15 @@ export class BillingService {
 
   async getTrialSignupLink(token: string) {
     const link = await this.trialLinksRepo.findOne({ where: { token } });
-    if (!link || link.status !== 'active' || link.usedAt) {
+    if (!link) {
       throw new NotFoundException('Link de cadastro não encontrado ou já utilizado.');
+    }
+    if (link.status !== 'active' || link.usedAt) {
+      // Se o link foi usado por uma conta que ainda está aguardando autorizar o PIX D+30, permite reabrir
+      const usedUser = link.usedById ? await this.usersRepo.findOne({ where: { id: link.usedById } }) : null;
+      if (!usedUser || usedUser.status === 'ativo') {
+        throw new NotFoundException('Link de cadastro não encontrado ou já utilizado.');
+      }
     }
     return {
       token: link.token,
@@ -192,79 +203,204 @@ export class BillingService {
   }
 
   async trialSignup(dto: TrialSignupDto) {
-    const initialPassword = generatePassword();
+    const phone = formatBrazilPhone(dto.phone);
+    if (!phone) {
+      throw new BadRequestException('Telefone inválido. Informe um número com DDD (ex.: 41999887766).');
+    }
+    const cleanCpf = onlyDigits(dto.cpf);
+    const cleanEmail = (dto.email || '').trim().toLowerCase();
+    const initialPassword = dto.password?.trim() || generatePassword();
     const passwordHash = await bcrypt.hash(initialPassword, 10);
 
-    const { user, trialEndsAt } = await this.trialLinksRepo.manager.transaction(async (manager) => {
+    const config = await this.configRepo.findOne({ where: {} });
+    if (!config) throw new NotFoundException('Configuração do sistema não encontrada.');
+
+    const { user, trialEndsAt, isNewUser } = await this.trialLinksRepo.manager.transaction(async (manager) => {
       const link = await manager.findOne(TrialSignupLink, {
         where: { token: dto.token },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!link || link.status !== 'active' || link.usedAt) {
+      if (!link) {
         throw new BadRequestException('Este link de cadastro já foi utilizado ou não está disponível.');
       }
 
-      const existing = await manager.findOne(User, { where: [{ email: dto.email }, { cpf: dto.cpf }] });
-      if (existing) throw new BadRequestException('Já existe uma conta com esse e-mail ou CPF.');
+      const existing = await manager.findOne(User, {
+        where: [{ email: cleanEmail }, { email: dto.email.trim() }, { cpf: cleanCpf }, { cpf: dto.cpf }],
+      });
+
+      if (link.status !== 'active' || link.usedAt) {
+        if (!existing || link.usedById !== existing.id || existing.status === 'ativo') {
+          throw new BadRequestException('Este link de cadastro já foi utilizado ou não está disponível.');
+        }
+      }
 
       const due = new Date();
       due.setDate(due.getDate() + 30);
 
-      const savedUser = await manager.save(
-        User,
-        manager.create(User, {
-          name: dto.name,
-          email: dto.email,
-          cpf: dto.cpf,
-          phone: dto.phone,
-          birthDate: dto.birthDate,
-          gender: dto.gender as User['gender'],
-          address: dto.address,
-          neighborhood: dto.neighborhood,
-          complement: dto.complement ?? null,
-          city: dto.city,
-          state: dto.state,
-          zipCode: dto.zipCode,
-          passwordHash,
-          plan: link.plan as User['plan'],
-          level: '1º Nível',
-          referredById: null,
-          status: 'ativo',
-          accessHealth: true,
-          accessClube: true,
-          accessPet: true,
-          accessFuneral: false,
-          trialEndsAt: due,
-        }),
-      );
+      let savedUser: User;
+      if (existing) {
+        const paidTxCount = await manager.count(Transaction, {
+          where: { userId: existing.id, status: 'pago' },
+        });
+        if (paidTxCount > 0 || existing.status === 'ativo') {
+          throw new BadRequestException('Já existe uma conta ativa com esse e-mail ou CPF.');
+        }
+        existing.name = dto.name;
+        existing.email = cleanEmail;
+        existing.cpf = cleanCpf;
+        existing.phone = dto.phone;
+        existing.birthDate = dto.birthDate;
+        existing.gender = dto.gender as User['gender'];
+        existing.address = dto.address;
+        existing.neighborhood = dto.neighborhood;
+        existing.complement = dto.complement ?? null;
+        existing.city = dto.city;
+        existing.state = dto.state;
+        existing.zipCode = dto.zipCode;
+        existing.plan = link.plan as User['plan'];
+        existing.trialEndsAt = due;
+        if (dto.password?.trim()) {
+          existing.passwordHash = passwordHash;
+        }
+        savedUser = await manager.save(User, existing);
+      } else {
+        savedUser = await manager.save(
+          User,
+          manager.create(User, {
+            name: dto.name,
+            email: cleanEmail,
+            cpf: cleanCpf,
+            phone: dto.phone,
+            birthDate: dto.birthDate,
+            gender: dto.gender as User['gender'],
+            address: dto.address,
+            neighborhood: dto.neighborhood,
+            complement: dto.complement ?? null,
+            city: dto.city,
+            state: dto.state,
+            zipCode: dto.zipCode,
+            passwordHash,
+            plan: link.plan as User['plan'],
+            level: '1º Nível',
+            referredById: null,
+            status: 'pendente',
+            accessHealth: false,
+            accessClube: false,
+            accessPet: false,
+            accessFuneral: false,
+            trialEndsAt: due,
+          }),
+        );
+      }
 
       link.status = 'used';
       link.usedAt = new Date();
       link.usedById = savedUser.id;
       await manager.save(TrialSignupLink, link);
 
-      return { user: savedUser, trialEndsAt: due };
+      return { user: savedUser, trialEndsAt: due, isNewUser: !existing };
     });
 
+    // Cancela eventuais tentativas anteriores pendentes deste usuário
+    if (!isNewUser) {
+      const oldPending = await this.txRepo.find({ where: { userId: user.id, status: 'pendente' } });
+      for (const pTx of oldPending) {
+        if (pTx.gatewayProvider === 'woovi') {
+          const subId = pTx.gatewaySubscriptionId || pTx.gatewayIdentifier;
+          if (subId) {
+            try { await this.wooviService.cancelPendingSubscription(subId); } catch {}
+          }
+        }
+        await this.txRepo.update(pTx.id, { status: 'cancelado', pixCode: null });
+      }
+    }
+
+    const price = basePriceForPlan(user.plan, config);
+    const correlationID = `vm-trial-${user.id}-${Date.now()}`;
+    const transaction = this.txRepo.create({
+      userId: user.id,
+      plan: user.plan,
+      value: price,
+      status: 'pendente',
+      paymentMethod: 'Pix Automático (D+30)',
+      commissionMmn: 0,
+      gatewayProvider: 'woovi',
+      gatewayIdentifier: correlationID,
+    });
+    await this.txRepo.save(transaction);
+
+    const dayCharge = Math.min(28, Math.max(1, trialEndsAt.getDate()));
+    const result = await this.wooviService.createPixAutomaticSubscription({
+      correlationID,
+      amountCents: Math.round(price * 100),
+      planName: user.plan,
+      client: { name: user.name, email: user.email, phone: `+55${phone}`, taxID: cleanCpf },
+      dayGenerateCharge: dayCharge,
+      journey: 'ONLY_RECURRENCY',
+    });
+
+    if (!result.ok || !result.emv) {
+      await this.txRepo.remove(transaction);
+      throw new BadRequestException(result.error || 'Não foi possível gerar o QR Code do Pix Automático para D+30.');
+    }
+
+    transaction.gatewaySubscriptionId = result.subscriptionId ?? null;
+    transaction.pixCode = result.emv;
+    await this.txRepo.save(transaction);
+
     await this.mailService.sendWelcomePassword(user.email, user.name, initialPassword);
-    try {
-      await this.mailService.sendWelcome(user.email);
-    } catch (err) {
-      this.logger.warn(`Falha ao enviar boas-vindas do cadastro 30 dias (user ${user.id}): ${(err as Error).message}`);
-    }
-    const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
-    if (venccaOk) {
-      user.telemedRegistered = true;
-      await this.usersRepo.save(user);
-    }
-    await this.clubeCertoService.registerAssociate(user);
 
     return {
       success: true,
-      status: 'trial_active',
-      user: { name: user.name, plan: user.plan, active: true },
+      status: 'trial_pending_pix',
+      transactionId: String(transaction.id),
+      pixCode: result.emv,
+      user: { name: user.name, plan: user.plan, active: false },
       trialEndsAt: formatDate(trialEndsAt),
     };
+  }
+
+  /**
+   * Ativa o período de 30 dias grátis assim que o cliente autoriza a recorrência D+30 no banco
+   * (evento PIX_AUTOMATIC_APPROVED ou consulta de status APPROVED).
+   */
+  private async activateTrialSubscription(origin: Transaction): Promise<boolean> {
+    const user = await this.usersService.findById(origin.userId);
+    if (user.status === 'inativo') return false;
+    const wasPending = user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet;
+    if (wasPending) {
+      const due = new Date();
+      due.setDate(due.getDate() + 30);
+      user.status = 'ativo';
+      user.accessHealth = true;
+      user.accessClube = true;
+      user.accessPet = true;
+      if (!user.trialEndsAt || user.trialEndsAt.getTime() < Date.now()) {
+        user.trialEndsAt = due;
+      }
+      await this.usersRepo.save(user);
+
+      try {
+        await this.mailService.sendWelcome(user.email);
+      } catch (err) {
+        this.logger.warn(`Falha ao enviar boas-vindas do cadastro 30 dias (user ${user.id}): ${(err as Error).message}`);
+      }
+      try {
+        const venccaOk = await this.venccaService.registerAssociates([this.venccaService.mapUserToCliente(user)]);
+        if (venccaOk) {
+          user.telemedRegistered = true;
+          await this.usersRepo.save(user);
+        }
+      } catch {}
+      try {
+        await this.clubeCertoService.registerAssociate(user);
+      } catch {}
+    }
+    if (origin.pixCode) {
+      origin.pixCode = null;
+      await this.txRepo.save(origin);
+    }
+    return true;
   }
 
   async checkout(dto: CheckoutDto, clientIp?: string) {
@@ -359,7 +495,15 @@ export class BillingService {
     const config = await this.configRepo.findOne({ where: {} });
     if (!config) throw new NotFoundException("Configuração do sistema não encontrada.");
 
-    const price = basePriceForPlan(dto.planType, config);
+    let price = basePriceForPlan(dto.planType, config);
+    let planLabel = dto.planType;
+    let planGatewayName = dto.planType;
+
+    if (dto.offer === 'promocional' || dto.offer === 'familia-promocional' || dto.offer === 'familia-19') {
+      price = 19.90;
+      planLabel = 'Família (1º Mês Promo R$ 19,90)';
+      planGatewayName = 'Família Promo 1º Mês';
+    }
 
     // ---- Fluxo Cartão de Crédito (Pagar.me) — vale p/ qualquer gateway PIX ativo ----
     if (dto.paymentMethod === 'card' && (await this.pagarmeService.isEnabled())) {
@@ -370,7 +514,7 @@ export class BillingService {
       const code = `vm-${savedUser.id}-${Date.now()}`;
       const transaction = this.txRepo.create({
         userId: savedUser.id,
-        plan: dto.planType,
+        plan: planLabel,
         value: price,
         status: 'pendente',
         paymentMethod: 'Cartão de Crédito',
@@ -395,7 +539,7 @@ export class BillingService {
           },
         },
         cardToken: dto.cardToken,
-        planName: dto.planType,
+        planName: planGatewayName,
         amountCents: Math.round(price * 100),
       });
       if (!result.ok || !result.subscriptionId) {
@@ -447,7 +591,7 @@ export class BillingService {
       const correlationID = `vm-${savedUser.id}-${Date.now()}`;
       const transaction = this.txRepo.create({
         userId: savedUser.id,
-        plan: dto.planType,
+        plan: planLabel,
         value: price,
         status: 'pendente',
         paymentMethod: 'Pix Automático',
@@ -460,7 +604,7 @@ export class BillingService {
       const result = await this.wooviService.createPixAutomaticSubscription({
         correlationID,
         amountCents: Math.round(price * 100),
-        planName: dto.planType,
+        planName: planGatewayName,
         client: { name: dto.name, email: dto.email, phone: `+55${phone}`, taxID: onlyDigits(dto.cpf) },
         dayGenerateCharge: new Date().getDate(), // PAYMENT_ON_APPROVAL exige o dia de hoje
       });
@@ -503,7 +647,7 @@ export class BillingService {
     if (!gatewayOn) {
       const transaction = this.txRepo.create({
         userId: savedUser.id,
-        plan: dto.planType,
+        plan: planLabel,
         value: price,
         status: 'pago',
         paymentMethod: dto.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito',
@@ -530,7 +674,7 @@ export class BillingService {
     const identifier = `vm-${savedUser.id}-${Date.now()}`;
     const transaction = this.txRepo.create({
       userId: savedUser.id,
-      plan: dto.planType,
+      plan: planLabel,
       value: price,
       status: 'pendente',
       paymentMethod: dto.paymentMethod === 'pix' ? 'PIX' : 'Cartão de Crédito',
@@ -1135,7 +1279,7 @@ export class BillingService {
 
   private async ensurePaidAccessForUser(userId: number): Promise<boolean> {
     const paid = await this.txRepo.findOne({
-      where: { userId, status: 'pago' },
+      where: { userId, status: In(['pago', 'Renovado (Pago)']) },
       order: { createdAt: 'DESC' },
     });
     if (!paid) return false;
@@ -1143,7 +1287,7 @@ export class BillingService {
   }
 
   private async ensurePaidAccess(tx: Transaction): Promise<boolean> {
-    if (tx.status !== 'pago') return false;
+    if (tx.status !== 'pago' && tx.status !== 'Renovado (Pago)') return false;
     const user = await this.usersService.findById(tx.userId);
     if (user.status === 'inativo') return false;
     const missingAccess = user.status !== 'ativo' || !user.accessHealth || !user.accessClube || !user.accessPet;
@@ -1380,12 +1524,16 @@ export class BillingService {
 
       if (origin.status === 'pendente') {
         // 1ª cobrança da assinatura quita o lançamento de origem.
+        const nowPaid = new Date();
+        const isTrialOrigin = (origin.gatewayIdentifier || '').startsWith('vm-trial-');
         const patch: Partial<Transaction> = { status: 'pago' };
         if (chargeId) patch.gatewayTransactionId = String(chargeId);
+        if (isTrialOrigin) patch.createdAt = nowPaid;
         const updated = await this.txRepo.update({ id: origin.id, status: 'pendente' }, patch);
         if (!updated.affected) return;
         origin.status = 'pago';
         if (chargeId) origin.gatewayTransactionId = String(chargeId);
+        if (isTrialOrigin) origin.createdAt = nowPaid;
         const user = await this.usersService.findById(origin.userId);
         if (isRenewalSub) {
           await this.notifyRenewalPaid(origin, user);
@@ -1436,13 +1584,18 @@ export class BillingService {
       const approvedKey = subGlobalID ? `${event}:${subGlobalID}` : `${event}:${origin.id}`;
       if (!this.onceWebhook(approvedKey)) return;
 
-      // A autorização do débito automático foi aprovada no banco. Não ativa a conta
-      // sozinha (esperamos o dinheiro entrar via COBR_COMPLETED), mas é o momento em
-      // que a renovação automática passa a valer — avisa o cliente. Best-effort.
+      // No cadastro de 30 dias grátis (vm-trial-), a 1ª cobrança só ocorre em D+30
+      // (journey ONLY_RECURRENCY). Portanto, a aprovação da recorrência no banco
+      // libera imediatamente os 30 dias de acesso aos benefícios.
+      const isTrialSub = (origin.gatewayIdentifier || '').startsWith('vm-trial-');
+      if (isTrialSub) {
+        await this.activateTrialSubscription(origin);
+      }
+
       try {
         const user = await this.usersService.findById(origin.userId);
         await this.mailService.sendAutoRenewalActive(user.email);
-        this.logger.log(`Woovi: renovação automática aprovada (user ${origin.userId}).`);
+        this.logger.log(`Woovi: renovação automática aprovada (user ${origin.userId}${isTrialSub ? ', trial 30d liberado' : ''}).`);
       } catch (err) {
         this.logger.warn(`Falha ao avisar renovação automática: ${(err as Error).message}`);
       }
@@ -1608,7 +1761,30 @@ export class BillingService {
     const tx = await this.txRepo.findOne({ where: { id: txId } });
     if (!tx) throw new NotFoundException('Lançamento não encontrado.');
 
-    if (tx.status === 'pendente' && tx.gatewayProvider === 'pagarme' && tx.gatewaySubscriptionId) {
+    if (tx.gatewayProvider === 'woovi' && (tx.gatewayIdentifier || '').startsWith('vm-trial-')) {
+      const user = await this.usersService.findById(tx.userId);
+      if (user.status === 'ativo') {
+        return { status: 'paid' };
+      }
+      const subId = tx.gatewaySubscriptionId || tx.gatewayIdentifier;
+      if (subId && tx.status === 'pendente') {
+        const state = await this.wooviService.getSubscriptionForPayment(subId);
+        if (state?.pixRecStatus === 'APPROVED') {
+          await this.activateTrialSubscription(tx);
+          return { status: 'paid' };
+        }
+        if (
+          state &&
+          (['CANCELED', 'CANCELLED', 'EXPIRED'].includes(state.subStatus) ||
+            ['CANCELED', 'CANCELLED', 'EXPIRED', 'REJECTED'].includes(state.pixRecStatus))
+        ) {
+          tx.status = 'cancelado';
+          tx.pixCode = null;
+          await this.txRepo.save(tx);
+          return { status: 'cancelled' };
+        }
+      }
+    } else if (tx.status === 'pendente' && tx.gatewayProvider === 'pagarme' && tx.gatewaySubscriptionId) {
       const st = await this.pagarmeService.getLatestChargeStatus(tx.gatewaySubscriptionId);
       if (st) await this.applyPagarmeStatus(tx, st);
     } else if (tx.status === 'pendente' && tx.gatewayTransactionId) {
@@ -1754,7 +1930,7 @@ export class BillingService {
       const paid = await this.txRepo
         .createQueryBuilder('tx')
         .innerJoin('tx.user', 'user')
-        .where('tx.status = :paid', { paid: 'pago' })
+        .where('tx.status IN (:...paids)', { paids: ['pago', 'Renovado (Pago)'] })
         .andWhere('tx.createdAt > :since', { since })
         .andWhere('user.status <> :inativo', { inativo: 'inativo' })
         .andWhere('(user.status <> :active OR user.accessHealth = false OR user.accessClube = false OR user.accessPet = false)', {
@@ -1796,10 +1972,8 @@ export class BillingService {
     let blocked = 0;
     for (const user of due) {
       try {
-        const paidAfterTrial = user.trialEndsAt
-          ? await this.txRepo.count({ where: { userId: user.id, status: 'pago', createdAt: MoreThan(user.trialEndsAt) } })
-          : 0;
-        if (paidAfterTrial > 0) continue;
+        const paidCount = await this.txRepo.count({ where: { userId: user.id, status: 'pago' } });
+        if (paidCount > 0) continue;
         user.status = 'pendente';
         user.accessHealth = false;
         user.accessClube = false;

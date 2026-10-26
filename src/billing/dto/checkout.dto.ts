@@ -4,11 +4,16 @@ import { IsBirthDate, normalizeBirthDate } from '../../common/birth-date';
 import { Transform } from 'class-transformer';
 
 export class CheckoutDto {
+  @IsOptional()
   @IsString()
-  refCode: string;
+  refCode?: string;
 
   @IsIn(['Individual', 'Família'])
   planType: string;
+
+  @IsOptional()
+  @IsString()
+  offer?: string;
 
   @IsString()
   name: string;

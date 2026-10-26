@@ -38,6 +38,8 @@ export interface WooviSubscriptionInput {
   client: { name: string; email: string; phone: string; taxID: string };
   /** Dia do mês (1-28) em que as cobranças recorrentes são geradas. */
   dayGenerateCharge?: number;
+  /** Jornada do Pix Automático: PAYMENT_ON_APPROVAL (padrão, cobra na hora) ou ONLY_RECURRENCY (autoriza hoje e cobra no vencimento futuro, ex: D+30). */
+  journey?: 'PAYMENT_ON_APPROVAL' | 'ONLY_RECURRENCY';
 }
 
 export interface WooviSubscriptionResult {
@@ -142,7 +144,7 @@ export class WooviService {
         taxID: input.client.taxID,
       },
       pixRecurringOptions: {
-        journey: 'PAYMENT_ON_APPROVAL',
+        journey: input.journey ?? 'PAYMENT_ON_APPROVAL',
         retryPolicy: 'THREE_RETRIES_7_DAYS',
       },
     };

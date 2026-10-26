@@ -25,10 +25,10 @@ export class AuthService {
 
   private async enforceTrialDue(user: User): Promise<User> {
     if (!user.trialEndsAt || user.status !== 'ativo' || user.trialEndsAt.getTime() > Date.now()) return user;
-    const paidAfterTrial = await this.txRepo.count({
-      where: { userId: user.id, status: 'pago', createdAt: MoreThan(user.trialEndsAt) },
+    const paidCount = await this.txRepo.count({
+      where: { userId: user.id, status: 'pago' },
     });
-    if (paidAfterTrial > 0) return user;
+    if (paidCount > 0) return user;
     user.status = 'pendente';
     user.accessHealth = false;
     user.accessClube = false;

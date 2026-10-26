@@ -1,4 +1,4 @@
-import { IsEmail, IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class TrialSignupDto {
@@ -42,4 +42,10 @@ export class TrialSignupDto {
 
   @IsString()
   zipCode: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6, { message: 'A senha deve ter pelo menos 6 caracteres.' })
+  password?: string;
 }
+

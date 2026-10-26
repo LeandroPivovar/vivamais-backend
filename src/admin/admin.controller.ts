@@ -52,6 +52,11 @@ export class AdminController {
     return this.adminService.toggleUserSubscription(id, !!body.active);
   }
 
+  @Post('users/:id/renew')
+  renewSubscription(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.renewUserSubscription(id);
+  }
+
   @Post('trial-links')
   createTrialSignupLink(@CurrentUser() authUser: { id: number }, @Body() body: { plan?: string }) {
     return this.adminService.createTrialSignupLink(body?.plan ?? '', authUser.id);
