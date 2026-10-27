@@ -8,7 +8,7 @@ import { AdminService } from './admin.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { UpdateUserDto } from '../users/dto/update-user.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
-import { CreatePromoLinkDto } from './dto/create-promo-link.dto';
+import { CreatePromoLinkDto, UpdatePromoLinkPixelsDto } from './dto/create-promo-link.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -67,6 +67,11 @@ export class AdminController {
   @Post('promo-links')
   createPromoLink(@CurrentUser() authUser: { id: number }, @Body() dto: CreatePromoLinkDto) {
     return this.adminService.createPromoLink(dto, authUser.id);
+  }
+
+  @Put('promo-links/:id/pixels')
+  setPromoLinkPixels(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePromoLinkPixelsDto) {
+    return this.adminService.setPromoLinkPixels(id, dto);
   }
 
   @Put('promo-links/:id/active')

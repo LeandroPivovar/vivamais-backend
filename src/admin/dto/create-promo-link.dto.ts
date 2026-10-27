@@ -28,4 +28,27 @@ export class CreatePromoLinkDto {
   @IsOptional()
   @IsDateString({}, { message: 'Data de validade inválida.' })
   expiresAt?: string | null;
+
+  /** Pixel da Meta só desta página (vazio = nenhum). */
+  @IsOptional()
+  @Matches(/^d{5,30}$/, { message: 'ID do pixel da Meta inválido (só números).' })
+  metaPixelId?: string | null;
+
+  /** Pixel do TikTok só desta página, além do pixel do site (vazio = nenhum). */
+  @IsOptional()
+  @Matches(/^[A-Z0-9]{5,30}$/, { message: 'ID do pixel do TikTok inválido (letras maiúsculas e números).' })
+  tiktokPixelId?: string | null;
+}
+
+/** Troca os pixels de um link já criado (vazio remove). */
+export class UpdatePromoLinkPixelsDto {
+  /** Pixel da Meta só desta página (vazio = nenhum). */
+  @IsOptional()
+  @Matches(/^d{5,30}$/, { message: 'ID do pixel da Meta inválido (só números).' })
+  metaPixelId?: string | null;
+
+  /** Pixel do TikTok só desta página, além do pixel do site (vazio = nenhum). */
+  @IsOptional()
+  @Matches(/^[A-Z0-9]{5,30}$/, { message: 'ID do pixel do TikTok inválido (letras maiúsculas e números).' })
+  tiktokPixelId?: string | null;
 }

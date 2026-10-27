@@ -212,6 +212,8 @@ export class BillingService {
       firstMonthPrice: Number(link.firstMonthPrice),
       regularPrice: basePriceForPlan(link.plan, config),
       expiresAt: link.expiresAt,
+      metaPixelId: link.metaPixelId ?? null,
+      tiktokPixelId: link.tiktokPixelId ?? null,
       available: !reason,
       reason,
     };

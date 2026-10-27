@@ -182,6 +182,19 @@ test('Admin cria link ilimitado (sem limite de usos nem validade)', async () => 
   assert.equal(r.expiresAt, null);
 });
 
+test('Pixels do link: salvos na criação, trocados depois e expostos na página pública', async () => {
+  const f = adminFixture();
+  const r = await f.svc.createPromoLink({ slug: 'meta', plan: 'Família', firstMonthPrice: 29.9, metaPixelId: '1022770670577377' }, 1);
+  assert.equal(r.metaPixelId, '1022770670577377');
+  assert.equal(r.tiktokPixelId, null);
+  f.svc.promoLinksRepo.findOne = async () => f.saved[0];
+  const u = await f.svc.setPromoLinkPixels(1, { metaPixelId: '', tiktokPixelId: 'DB4JR6JC77UAOLDV4V9G' });
+  assert.equal(u.metaPixelId, null);
+  assert.equal(u.tiktokPixelId, 'DB4JR6JC77UAOLDV4V9G');
+  const pub = await checkoutFixture(promo({ metaPixelId: '123456789' })).svc.getPromoLink('black-friday');
+  assert.equal(pub.metaPixelId, '123456789');
+});
+
 test('Admin não cria link com fim de URL repetido', async () => {
   const f = adminFixture(promo());
   await assert.rejects(f.svc.createPromoLink({ slug: 'black-friday', plan: 'Família', firstMonthPrice: 29.9 }, 1), /Já existe/);

@@ -6,7 +6,7 @@ import { AppConfig } from './entities/config.entity';
 import { Transaction } from '../billing/entities/transaction.entity';
 import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
 import { PromoLink } from '../billing/entities/promo-link.entity';
-import { CreatePromoLinkDto } from './dto/create-promo-link.dto';
+import { CreatePromoLinkDto, UpdatePromoLinkPixelsDto } from './dto/create-promo-link.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -211,6 +211,8 @@ export class AdminService {
       usesCount: link.usesCount,
       expiresAt: link.expiresAt,
       active: link.active,
+      metaPixelId: link.metaPixelId ?? null,
+      tiktokPixelId: link.tiktokPixelId ?? null,
       status: !link.active ? 'encerrado' : expired ? 'expirado' : soldOut ? 'esgotado' : 'ativo',
       createdAt: link.createdAt,
     };
@@ -249,10 +251,22 @@ export class AdminService {
         usesCount: 0,
         expiresAt,
         active: true,
+        metaPixelId: dto.metaPixelId || null,
+        tiktokPixelId: dto.tiktokPixelId || null,
         createdById: adminId,
       }),
     );
     return this.promoLinkResponse(link, config);
+  }
+
+  /** Troca os pixels de um link (vazio remove). */
+  async setPromoLinkPixels(id: number, dto: UpdatePromoLinkPixelsDto) {
+    const link = await this.promoLinksRepo.findOne({ where: { id } });
+    if (!link) throw new NotFoundException('Link de oferta não encontrado.');
+    link.metaPixelId = dto.metaPixelId || null;
+    link.tiktokPixelId = dto.tiktokPixelId || null;
+    await this.promoLinksRepo.save(link);
+    return this.promoLinkResponse(link, await this.configRepo.findOne({ where: {} }));
   }
 
   /** Encerra ou reabre um link (o histórico e os usos ficam). */

@@ -36,6 +36,13 @@ export class PromoLink {
   @Column({ type: 'boolean', default: true })
   active: boolean;
 
+  // Pixels da campanha carregados só na página deste link (nulo = só os pixels do site).
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  metaPixelId: string | null;
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  tiktokPixelId: string | null;
+
   @Column({ type: 'int', nullable: true })
   createdById: number | null;
 
