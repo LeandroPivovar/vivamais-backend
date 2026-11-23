@@ -74,7 +74,8 @@ export class VenccaService {
   /**
    * Remove caracteres especiais que a Vencca rejeita em campos de texto (ex.: parênteses
    * em "Vila Iolanda(Lajeado)" → "Vila Iolanda Lajeado"). Mantém letras (com acento),
-   * números, espaço e hífen; troca o resto por espaço e normaliza os espaços.
+   * números e espaço; troca o resto por espaço (inclusive hífen: "Pariquera-Açu" era
+   * recusado) e normaliza os espaços.
    */
   private sanitizeText(value: string | null | undefined): string {
     return (value ?? '')
@@ -84,8 +85,8 @@ export class VenccaService {
       // Remove acentos (ç->c, ã->a, ó->o, é->e...) — a Vencca só aceita ASCII simples.
       .normalize('NFD')
       .replace(/[̀-ͯ]/g, '')
-      // Sobra só letras A-Z, números, espaço e hífen; o resto vira espaço.
-      .replace(/[^A-Za-z0-9\s-]/g, ' ')
+      // Sobra só letras A-Z, números e espaço; o resto (inclusive hífen) vira espaço.
+      .replace(/[^A-Za-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }
