@@ -4,6 +4,8 @@ import { createSign } from 'crypto';
 import { readFileSync } from 'fs';
 import { Repository } from 'typeorm';
 import { PushDevice } from './entities/push-device.entity';
+import { PushBroadcast } from './entities/push-broadcast.entity';
+import { PUSH_APPS, PushApp } from './push-apps';
 
 /** Notificação mostrada no celular. `tab` abre essa aba do app ao tocar. */
 export interface PushMessage {
@@ -31,17 +33,21 @@ export class PushService {
   private account: ServiceAccount | null | undefined;
   private accessToken: { value: string; expiresAt: number } | null = null;
 
-  constructor(@InjectRepository(PushDevice) private devicesRepo: Repository<PushDevice>) {}
+  constructor(
+    @InjectRepository(PushDevice) private devicesRepo: Repository<PushDevice>,
+    @InjectRepository(PushBroadcast) private broadcastsRepo?: Repository<PushBroadcast>,
+  ) {}
 
-  async registerDevice(userId: number, token: string, platform = 'android') {
+  async registerDevice(userId: number, token: string, platform = 'android', app: PushApp = 'vivamais') {
     const existing = await this.devicesRepo.findOne({ where: { token } });
     if (existing) {
       existing.userId = userId;
       existing.platform = platform;
+      existing.app = app;
       existing.updatedAt = new Date();
       await this.devicesRepo.save(existing);
     } else {
-      await this.devicesRepo.save(this.devicesRepo.create({ userId, token, platform }));
+      await this.devicesRepo.save(this.devicesRepo.create({ userId, token, platform, app }));
     }
     return { ok: true };
   }
@@ -70,6 +76,48 @@ export class PushService {
       this.logger.warn(`Push "${message.title}" falhou (user ${userId}): ${(err as Error).message}`);
       return 0;
     }
+  }
+
+  /**
+   * Admin: manda a mesma notificação para todos os celulares de um app (ex.: novidades
+   * do Kids). Envia em lotes paralelos e guarda no histórico quantos o Firebase aceitou.
+   */
+  async broadcast(app: PushApp, title: string, body: string, adminId: number | null = null) {
+    const account = this.loadAccount();
+    if (!account) throw new Error('Notificações desligadas no servidor (falta a credencial do Firebase).');
+    const devices = await this.devicesRepo.find({ where: { app } });
+    let sent = 0;
+    if (devices.length) {
+      const token = await this.getAccessToken(account);
+      const message: PushMessage = { title, body };
+      for (let i = 0; i < devices.length; i += 20) {
+        const results = await Promise.all(
+          devices.slice(i, i + 20).map((d) => this.sendToDevice(account, token, d, message).catch(() => false)),
+        );
+        sent += results.filter(Boolean).length;
+      }
+    }
+    this.logger.log(`Push em massa "${title}" (${app}): ${sent}/${devices.length} celular(es).`);
+    const record = this.broadcastsRepo
+      ? await this.broadcastsRepo.save(this.broadcastsRepo.create({ app, title, body, total: devices.length, sent, createdById: adminId }))
+      : null;
+    return { id: record?.id ?? null, app, total: devices.length, sent };
+  }
+
+  /** Admin: celulares cadastrados por app e os últimos envios. */
+  async adminSummary() {
+    const rows = await this.devicesRepo
+      .createQueryBuilder('d')
+      .select('d.app', 'app')
+      .addSelect('COUNT(*)', 'total')
+      .groupBy('d.app')
+      .getRawMany<{ app: string; total: string }>();
+    const devices = Object.fromEntries(PUSH_APPS.map((a) => [a, 0])) as Record<PushApp, number>;
+    for (const r of rows) if (r.app in devices) devices[r.app as PushApp] = Number(r.total);
+    const history = this.broadcastsRepo
+      ? await this.broadcastsRepo.find({ order: { createdAt: 'DESC' }, take: 30 })
+      : [];
+    return { enabled: !!this.loadAccount(), devices, history };
   }
 
   private async sendToDevice(account: ServiceAccount, accessToken: string, device: PushDevice, message: PushMessage) {

@@ -110,3 +110,45 @@ test('PushService: envia pelo FCM v1 e remove celular desinstalado', async (t) =
   assert.equal(sent[0].body.message.data.tab, 'financeiro');
   assert.deepEqual(deleted, [{ id: 2 }]);
 });
+
+test('PushService.broadcast: envia para todos os celulares do app e guarda no histórico', async (t) => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const dir = mkdtempSync(join(tmpdir(), 'fcm-'));
+  const file = join(dir, 'sa.json');
+  writeFileSync(file, JSON.stringify({ project_id: 'viva-teste', client_email: 'sa@viva-teste.iam.gserviceaccount.com', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }) }));
+  const prev = process.env.FCM_SERVICE_ACCOUNT_FILE;
+  process.env.FCM_SERVICE_ACCOUNT_FILE = file;
+  const original = global.fetch;
+  t.after(() => { global.fetch = original; if (prev) process.env.FCM_SERVICE_ACCOUNT_FILE = prev; else delete process.env.FCM_SERVICE_ACCOUNT_FILE; });
+  const tokens = [];
+  global.fetch = async (url, init) => {
+    if (url.includes('oauth2')) return { ok: true, json: async () => ({ access_token: 'tok', expires_in: 3600 }) };
+    const body = JSON.parse(init.body);
+    tokens.push(body.message.token);
+    if (body.message.token === 'kid-3') return { ok: false, status: 500, text: async () => 'erro' };
+    return { ok: true, text: async () => '{}' };
+  };
+  let where = null;
+  const devices = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, token: `kid-${i + 1}`, app: 'kids' }));
+  const saved = [];
+  const svc = new PushService(
+    { find: async (opts) => { where = opts.where; return devices; } },
+    { create: (x) => x, save: async (x) => { saved.push(x); return { id: 7, ...x }; } },
+  );
+  svc.logger = quiet;
+  const r = await svc.broadcast('kids', 'Novidade no Kids', 'Jogo novo liberado!', 1);
+  assert.deepEqual(where, { app: 'kids' });
+  assert.equal(tokens.length, 25);
+  assert.deepEqual(r, { id: 7, app: 'kids', total: 25, sent: 24 });
+  assert.equal(saved[0].title, 'Novidade no Kids');
+  assert.equal(saved[0].createdById, 1);
+});
+
+test('PushService.broadcast: sem credencial avisa o admin em vez de fingir que enviou', async () => {
+  const prev = process.env.FCM_SERVICE_ACCOUNT_FILE;
+  delete process.env.FCM_SERVICE_ACCOUNT_FILE;
+  const svc = new PushService({ find: async () => [] });
+  svc.logger = quiet;
+  await assert.rejects(() => svc.broadcast('teens', 'Oi', 'Teste'), /desligadas/);
+  if (prev) process.env.FCM_SERVICE_ACCOUNT_FILE = prev;
+});

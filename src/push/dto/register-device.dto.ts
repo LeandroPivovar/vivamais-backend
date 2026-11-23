@@ -1,4 +1,5 @@
 import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { PUSH_APPS, PushApp } from '../push-apps';
 
 export class RegisterDeviceDto {
   @IsString()
@@ -9,4 +10,8 @@ export class RegisterDeviceDto {
   @IsOptional()
   @IsIn(['android', 'ios'])
   platform?: string;
+
+  @IsOptional()
+  @IsIn(PUSH_APPS)
+  app?: PushApp;
 }

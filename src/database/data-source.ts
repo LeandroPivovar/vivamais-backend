@@ -7,6 +7,7 @@ import { Transaction } from '../billing/entities/transaction.entity';
 import { TrialSignupLink } from '../billing/entities/trial-signup-link.entity';
 import { PromoLink } from '../billing/entities/promo-link.entity';
 import { PushDevice } from '../push/entities/push-device.entity';
+import { PushBroadcast } from '../push/entities/push-broadcast.entity';
 import { Activity } from '../activities/entities/activity.entity';
 import { AppConfig } from '../admin/entities/config.entity';
 import { Ticket } from '../tickets/entities/ticket.entity';
@@ -24,7 +25,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME ?? 'root',
   password: process.env.DB_PASSWORD ?? '',
   database: process.env.DB_DATABASE ?? 'acesso_saude',
-  entities: [User, ReferralLink, Transaction, TrialSignupLink, PromoLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Heir, PushDevice],
+  entities: [User, ReferralLink, Transaction, TrialSignupLink, PromoLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Heir, PushDevice, PushBroadcast],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   synchronize: false,
 });

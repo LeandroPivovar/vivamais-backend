@@ -17,6 +17,11 @@ export class PushDevice {
   @Column({ type: 'varchar', length: 20, default: 'android' })
   platform: string;
 
+  // Qual app está no celular: vivamais (titular), kids ou teens.
+  @Index()
+  @Column({ type: 'varchar', length: 20, default: 'vivamais' })
+  app: string;
+
   @CreateDateColumn()
   createdAt: Date;
 
