@@ -37,6 +37,8 @@ import { MassflowModule } from './massflow/massflow.module';
 import { MetaModule } from './meta/meta.module';
 import { Withdrawal } from './withdrawals/entities/withdrawal.entity';
 import { Heir } from './heirs/entities/heir.entity';
+import { PushDevice } from './push/entities/push-device.entity';
+import { PushModule } from './push/push.module';
 
 @Module({
   imports: [
@@ -49,7 +51,7 @@ import { Heir } from './heirs/entities/heir.entity';
       username: process.env.DB_USERNAME ?? 'root',
       password: process.env.DB_PASSWORD ?? '',
       database: process.env.DB_DATABASE ?? 'acesso_saude',
-      entities: [User, ReferralLink, Transaction, TrialSignupLink, PromoLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal, Heir],
+      entities: [User, ReferralLink, Transaction, TrialSignupLink, PromoLink, Activity, AppConfig, Ticket, TicketMessage, ChatConversation, ChatMessage, Withdrawal, Heir, PushDevice],
       synchronize: false,
       migrationsRun: false,
     }),
@@ -75,6 +77,7 @@ import { Heir } from './heirs/entities/heir.entity';
     MassflowModule,
     MetaModule,
     HeirsModule,
+    PushModule,
   ],
 })
 export class AppModule {}

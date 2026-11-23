@@ -19,6 +19,7 @@ import { MailService } from '../mail/mail.service';
 import { TelegramService } from '../telegram/telegram.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MassflowService } from '../massflow/massflow.service';
+import { PushService } from '../push/push.service';
 import { MetaCapiService } from '../meta/meta-capi.service';
 import { ReferralLink } from '../referrals/entities/referral-link.entity';
 import { CheckoutDto } from './dto/checkout.dto';
@@ -97,7 +98,14 @@ export class BillingService {
     private metaCapiService: MetaCapiService,
     // Por último: os testes montam o serviço passando as dependências na ordem.
     @InjectRepository(PromoLink) private promoLinksRepo: Repository<PromoLink>,
+    private pushService?: PushService,
   ) {}
+
+  /** Notificação no celular (app Android). Best-effort: nunca segura nem derruba o pagamento. */
+  private pushTo(userId: number, title: string, body: string, tab: string) {
+    if (!this.pushService) return;
+    void this.pushService.sendToUser(userId, { title, body, tab });
+  }
 
   private onceWebhook(key: string, ttlMs = 24 * 60 * 60 * 1000): boolean {
     const now = Date.now();
@@ -1006,6 +1014,7 @@ export class BillingService {
           await this.confirmPaid(transaction, link, user);
         } else {
           await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(price));
+          this.pushRenewalConfirmed(user.id, user.plan, price);
           void this.massflowService.notifyRenewal({
             name: user.name,
             phone: user.phone,
@@ -1196,6 +1205,7 @@ export class BillingService {
     } else if (paidNow) {
       // Renovação aprovada na hora: sem comissão, mas confirma o pagamento por e-mail.
       await this.mailService.sendPaymentConfirmed(user.email, user.name, user.plan, formatCurrency(price));
+      this.pushRenewalConfirmed(user.id, user.plan, price);
       void this.massflowService.notifyRenewal({
         name: user.name,
         phone: user.phone,
@@ -1306,6 +1316,11 @@ export class BillingService {
             formatCurrency(Math.round(credited * 100) / 100),
           );
         }
+        if (shouldCreditReferral && referrer) {
+          const credited = Math.round((commission + bonus) * 100) / 100;
+          const firstName = (user.name || '').trim().split(/s+/)[0] || 'seu indicado';
+          this.pushTo(referrer.id, 'Comissão Confirmada', `A indicação de ${firstName} foi confirmada: ${formatCurrency(credited)} no seu saldo.`, 'indicacoes');
+        }
       } catch (err) {
         this.logger.warn(`Falha ao avisar indicador da comissão (link ${link.id}): ${(err as Error).message}`);
       }
@@ -1350,6 +1365,7 @@ export class BillingService {
       user.plan,
       formatCurrency(Number(transaction.value)),
     );
+    this.pushTo(user.id, 'Pagamento Aprovado', `Seu pagamento de ${formatCurrency(Number(transaction.value))} do plano ${user.plan} foi aprovado. Seus benefícios estão liberados.`, 'home');
     // Purchase na Conversions API da Meta. O pixel do navegador só dispara quando o
     // pagamento fecha na hora (cartão); no PIX o cliente já saiu da tela, então é
     // daqui que a venda é reportada. Mesmo event_id nos dois lados = sem duplicata.
@@ -1456,6 +1472,15 @@ export class BillingService {
     return missingAccess;
   }
 
+  private pushRenewalConfirmed(userId: number, plan: string, value: number) {
+    this.pushTo(userId, 'Renovação Confirmada', `Sua mensalidade de ${formatCurrency(value)} foi paga. Seu plano ${plan} continua ativo.`, 'financeiro');
+  }
+
+  /** Cobrança mensal recusada com a assinatura já ativa: o cliente precisa resolver o pagamento. */
+  private pushRenewalPending(userId: number, plan: string) {
+    this.pushTo(userId, 'Renovação Pendente', `Não conseguimos cobrar a mensalidade do seu plano ${plan}. Confira o pagamento para não perder seus benefícios.`, 'financeiro');
+  }
+
   private async notifyRenewalPaid(tx: Transaction, user?: User): Promise<void> {
     const owner = user ?? (await this.usersService.findById(tx.userId));
     await this.warnIfChargeDiffersFromPlan(tx, owner, false);
@@ -1466,6 +1491,7 @@ export class BillingService {
       owner.plan,
       formatCurrency(Number(tx.value)),
     );
+    this.pushRenewalConfirmed(owner.id, owner.plan, Number(tx.value));
     // Esteira de renovação no MassFlow (WhatsApp). Best-effort.
     void this.massflowService.notifyRenewal({
       name: owner.name,
@@ -1712,6 +1738,10 @@ export class BillingService {
           reason: event,
         });
         this.logger.warn(`Woovi: autorização/cobrança rejeitada (user ${origin.userId}, event ${event}).`);
+      } else if (event === 'PIX_AUTOMATIC_COBR_REJECTED' && origin.status === 'pago') {
+        const user = await this.usersService.findById(origin.userId);
+        this.pushRenewalPending(user.id, user.plan);
+        this.logger.warn(`Woovi: cobrança mensal recusada (user ${origin.userId}).`);
       }
     } else if (event === 'PIX_AUTOMATIC_APPROVED') {
       const approvedKey = subGlobalID ? `${event}:${subGlobalID}` : `${event}:${origin.id}`;
@@ -1768,6 +1798,7 @@ export class BillingService {
       });
     } else if (status === 'failed' && tx.status === 'pago') {
       const user = await this.usersService.findById(tx.userId);
+      this.pushRenewalPending(user.id, user.plan);
       await this.notificationsService.notifyRefundOrCancel({
         transactionId: tx.id,
         client: user.name,

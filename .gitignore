@@ -7,3 +7,6 @@ dist/
 # Duplicata stray de deploy / build
 /backend/
 dist/
+
+# Credencial do Firebase (conta de serviço) — nunca versionar
+firebase-service-account*.json
