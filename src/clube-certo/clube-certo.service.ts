@@ -253,7 +253,10 @@ export class ClubeCertoService {
     const doc = this.onlyDigits(cpf);
     if (!doc) return null;
     try {
-      const res = await fetch(`https://integrations.clubecerto.com.br/webapp/${doc}/${companyId}`);
+      const companyToken = await this.getCompanyToken(cfg);
+      const res = await fetch(`https://integrations.clubecerto.com.br/webapp/${doc}/${companyId}`, {
+        headers: companyToken ? { Authorization: `Bearer ${companyToken}` } : {},
+      });
       if (!res.ok) {
         this.logger.warn(`Clube Certo webapp ${doc}: HTTP ${res.status}`);
         return null;
